@@ -68,6 +68,9 @@ test("앱 틀 좋은 예: 넘침 없음, 다크 대비는 body 배경 기준, �
     assert.ok(!r.findings.some((f) => f.rule === "tap-target" && /checkbox|input(?!#)/.test(f.target) && !/btn/.test(f.target)), "라벨이 44px인 체크박스는 통과");
   }
   assert.ok(dialogs.includes("beforeunload"), "beforeunload 대화상자를 수락하고 기록");
+  const m = runs.find((r) => r.width === 1280 && r.scheme === "light").metrics;
+  assert.ok(m && typeof m.boxes === "number" && m.fontSizes >= 1, "첫 화면 수치");
+  assert.equal(m.filledButtons, 0, "채움 버튼 없음(테두리 버튼만)");
 });
 
 test("--height와 첫 화면 스크린샷", { skip, timeout: 120000 }, () => {

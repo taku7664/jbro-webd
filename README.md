@@ -36,6 +36,7 @@ skills/webd/
     context.md         맥락 잡기, PRODUCT.md 작성
     modes.md           화면 모드 4개 (Persuade·Operate·Read·Experience 깊이)
     structure.md       화면 구조 판단: 일곱 질문 → 꼭 넣을 것, 작업대형 골격, 페이지형 쏠림 점검
+    visual-quality.md  미감 기준: 기준 제품, 색 전략, 위계 순서, 선·상자 줄이기, 다른 눈의 비평
     direction.md       방향 정하기 경로 A–D, DESIGN.md 잠금
     archetypes.md      아키타입 12, 미학 계열 12, 리믹스 규칙, register 다이얼, 시그니처
     industries.md      업종 22개의 지킬 것·흔한 기본값·위험

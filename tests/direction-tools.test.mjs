@@ -129,7 +129,7 @@ test("operate + workbench: 도구 화면에 맞는 패만 나눠 준다", () => 
     for (const h of deal({ project: "tool", seedDate: "2026-11-09", candidates: 3, reroll: r, mode: "operate", structure: "workbench" }).hands) {
       assert.ok(op.families.includes(h.family), `바탕 ${h.family}`);
       assert.ok(STRUCTURE_DISCIPLINES.workbench.includes(h.discipline), `구성 ${h.discipline}`);
-      assert.ok(!op.excludeSignatures.includes(h.signature), `시그니처 ${h.signature}`);
+      assert.ok(op.signatures.includes(h.signature), `시그니처 ${h.signature}`);
       assert.ok(h.borrow.every((b) => ["color", "type"].includes(b.axis)), "빌리는 축은 색·타입만");
       assert.equal(h.axes.motion.from, "mode");
       assert.equal(h.axes.composition.from, "mode");
@@ -146,6 +146,16 @@ test("모드만 주면 그 모드의 구성 방식, 모드 없이 구조만 주�
   const res = deal({ project: "p", seedDate: "2026-11-09", mode: "operate" });
   assert.equal(res.mode, "operate");
   assert.match(res.note, /라벨·버튼/);
+});
+
+test("색 전략: 모드별로 나눠 주고, pin하면 고정, 황토 색상은 주의 표시", () => {
+  const seen = new Set();
+  for (let r = 0; r < 40; r++) for (const h of deal({ project: "s", seedDate: "2026-11-09", reroll: r, mode: "operate" }).hands) { seen.add(h.strategy); assert.ok(h.strategyDesc); assert.equal(h.caution !== null, h.hue >= 20 && h.hue <= 85); }
+  assert.ok(!seen.has("drenched"), "operate에는 몰입 없음");
+  assert.ok(seen.has("committed"), "operate에도 확신 전략이 나옴");
+  for (const h of deal({ project: "s", seedDate: "2026-11-09", pins: { strategy: "full" } }).hands) assert.equal(h.strategy, "full");
+  assert.throws(() => deal({ project: "s", seedDate: "2026-11-09", pins: { strategy: "loud" } }));
+  for (let r = 0; r < 30; r++) for (const h of deal({ project: "t", seedDate: "2026-11-09", reroll: r, mode: "operate" }).hands) assert.notEqual(h.family, "terminal", "operate 바탕에 터미널 없음");
 });
 
 test("구조 여럿은 쉼표로, 공통 구성 방식만", () => {

@@ -55,13 +55,14 @@ description: 웹 UI를 만들거나 다시 디자인하거나 비평·감사·�
 |---|---|---|
 | 맥락 | 대상·목표·화면 모드·화면 구조, `PRODUCT.md` | `reference/context.md`, `reference/modes.md`, `reference/structure.md` (흐릿하면 `ops/shape.md`) |
 | 방향 | 스타일·레퍼런스 이미지·레퍼런스 충돌·기존 화면 중 하나로 4축 + 시그니처, `DESIGN.md` 잠금 | `reference/direction.md`, 필요하면 `styles/INDEX.md` |
-| 구현 | 1차 구조·콘텐츠 → 2차 글자·색·간격 | `reference/build.md`, **UI 코드를 고치기 직전에** `reference/craft-floor.md` |
-| 검증 | 자동 검사 → 렌더 → 비평 → 수정 스펙 | `reference/verify.md`, `reference/ai-tells.md` |
+| 구현 | 1차 구조·콘텐츠 → 2차 글자·색·간격 | `reference/build.md`, **UI 코드를 고치기 직전에** `reference/craft-floor.md`와 `reference/visual-quality.md` |
+| 검증 | 자동 검사 → 렌더 → 다른 눈의 비평 → 수정 스펙 | `reference/verify.md`, `reference/ai-tells.md`, `reference/visual-quality.md` |
 
 새 작업이 아니어도 판단이 필요한 축이 생기면 해당 기초 문서를 읽습니다:
 
 | 축 | 문서 |
 |---|---|
+| 보기 좋음 (위계·묶기·색 전략·기준 제품) | `reference/visual-quality.md` |
 | 글자 / 한글 | `reference/foundations/typography.md`, `hangul.md` |
 | 색 | `reference/foundations/color.md` |
 | 구성·위계·간격 | `reference/foundations/layout.md` |

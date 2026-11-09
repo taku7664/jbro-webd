@@ -12,7 +12,7 @@
 //   node dealer.mjs --project x --seed-date 2026-11-09 --mode operate --structure workbench
 // --mode(persuade|operate|read|experience)와 --structure(reference/structure.md 유형)를 주면
 // 그 화면에 맞지 않는 바탕 계열·구성 방식·시그니처·빌릴 축을 패에서 뺀다. 도구 화면에 포스터 구성이 나오지 않게.
-// --pin 가능한 축: family, borrow(type|color|composition|motion), from(계열 id), discipline, hue(0-360), signature
+// --pin 가능한 축: family, borrow(type|color|composition|motion), from(계열 id), discipline, hue(0-360), signature, strategy(restrained|committed|full|drenched)
 // 종료 코드: 0 성공, 1 사용 오류, 3 조건을 만족하는 패를 만들 수 없음
 
 import { pathToFileURL } from "node:url";
@@ -66,10 +66,19 @@ export const SIGNATURES = [
 export const MODE_RULES = {
   persuade: {},
   operate: {
-    families: ["swiss", "terminal", "data", "wayfinding", "editorial", "neobrutal", "softfuture"],
+    // terminal 제외: 사용자가 이미 다루는 도구를 바탕으로 주면 작업 화면에서 그 도구의 의상이 된다(pin하면 허용)
+    families: ["swiss", "data", "wayfinding", "editorial", "neobrutal", "softfuture"],
     disciplines: ["strict-grid", "asymmetric-split", "dense-panels", "ledger", "sidebar-reference"],
     borrowWeights: { color: 0.65, type: 0.35 },
-    excludeSignatures: ["여백에 매단 거대한 순서 번호 (내용이 실제 순서일 때만)", "한 번만 일어나는 진입 연출 하나", "모든 이미지를 같은 고유 도형으로 자르기", "의도적으로 어긋난 정렬선 하나", "인쇄물의 흔적(판 어긋남, 재단선, 접힌 자국) 하나", "섹션을 잇는 하나의 연속된 선"],
+    // Operate의 시그니처는 정보를 그 분야 방식으로 보여 주는 것 하나(modes.md). 장식·물리 반응은 나눠 주지 않는다
+    signatures: [
+      "주 결과(미리보기·출력)를 실제 비율·실제 단위의 도면이나 실물 축척으로",
+      "상태·진행을 그 분야의 지도·표 문법으로 (노선도, 시간표, 공정표)",
+      "숫자·데이터를 주인공으로 한 타이포그래피 (표 숫자, 단위, 자릿수 정렬)",
+      "포인트 색을 현재 위치와 주 행동에만 쓰는 규칙",
+      "그 분야의 식별자 표기(주문번호·청구기호·좌표)를 읽기 쉬운 고유 형식으로",
+      "변경·차이를 그 분야의 교정 부호처럼 보여 주기 (무엇이 바뀌었는지 한눈에)",
+    ],
     fixed: { composition: "아래 구성 방식을 따름. 계열 고유의 구성(넓은 여백·포스터 덩어리 등)은 쓰지 않고 선·면 처리만 가져옴 (Operate 고정)", motion: "상태 변화만, 150–250ms (Operate 고정)" },
     note: "타입을 빌렸다면 대상 이름·영역 제목에만 씁니다. 라벨·버튼·입력·데이터는 본문 고딕 (modes.md Operate).",
   },
@@ -93,6 +102,20 @@ export const STRUCTURE_DISCIPLINES = {
   steps: ["single-column", "timeline", "strict-grid"],
 };
 
+// 색 전략(visual-quality.md 2절). 모드마다 나눠 주는 비율이 다르다
+export const COLOR_STRATEGIES = {
+  restrained: "절제: 세계에서 색조를 뽑은 무채 + 포인트 하나 (틀에는 색을 써서 결정을 보여 줌)",
+  committed: "확신: 채도 있는 색 하나가 화면의 30–60% (색 레일·머리 막대·색 바탕)",
+  full: "풀 팔레트: 이름 붙은 색 역할 3–4개",
+  drenched: "몰입: 화면 전체가 그 색",
+};
+const STRATEGY_WEIGHTS = {
+  operate: { restrained: 0.45, committed: 0.4, full: 0.15 },
+  read: { restrained: 0.6, committed: 0.3, full: 0.1 },
+  persuade: { restrained: 0.2, committed: 0.35, full: 0.25, drenched: 0.2 },
+  experience: { restrained: 0.25, committed: 0.25, full: 0.2, drenched: 0.3 },
+};
+
 const AXES = ["type", "color", "composition", "motion"];
 const BORROW_WEIGHTS = { type: 0.4, motion: 0.3, color: 0.15, composition: 0.15 };
 
@@ -100,7 +123,8 @@ const BORROW_WEIGHTS = { type: 0.4, motion: 0.3, color: 0.15, composition: 0.15 
 const inRange = (h, a, b) => (a <= b ? h >= a && h <= b : h >= a || h <= b);
 export const BANNED = [
   { why: "어두운 바탕 + 시안·청록 포인트", test: (c) => ["terminal", "cinematic", "softfuture"].includes(c.family) && inRange(c.hue, 175, 215) },
-  { why: "보라–남색 포인트", test: (c) => inRange(c.hue, 265, 300) },
+  // OKLCH 색상 기준: #6366F1≈277°, #8B5CF6≈293°, #A855F7≈304° 를 모두 덮게
+  { why: "보라–남색 포인트", test: (c) => inRange(c.hue, 262, 315) },
   { why: "크림 + 세리프 + 테라코타", test: (c) => ["editorial", "organic"].includes(c.family) && inRange(c.hue, 20, 45) },
   { why: "장식용 글래스모피즘 + 어두운 청색", test: (c) => c.family === "softfuture" && c.borrow.some((b) => b.from === "cinematic") },
 ];
@@ -143,7 +167,7 @@ export function deal({ project, seedDate, candidates = 3, reroll = 0, pins = {},
   let sDisc = null;
   if (lists.length) { const inter = lists.reduce((a, b) => a.filter((d) => b.includes(d))); sDisc = inter.length ? inter : [...new Set(lists.flat())]; }
   if (sDisc) { const both = allDisc.filter((d) => sDisc.includes(d)); allDisc = both.length ? both : sDisc; }
-  const allSigs = SIGNATURES.filter((x) => !(rule.excludeSignatures || []).includes(x));
+  const allSigs = rule.signatures || SIGNATURES.filter((x) => !(rule.excludeSignatures || []).includes(x));
   const borrowWeights = rule.borrowWeights || BORROW_WEIGHTS;
 
   const r = rng(`${project}|${seedDate}|${reroll}`);
@@ -173,7 +197,8 @@ export function deal({ project, seedDate, candidates = 3, reroll = 0, pins = {},
       const hue = pins.hue !== undefined ? Number(pins.hue) : Math.round((baseHue + GOLDEN * (i + attempt * 0.37)) % 360);
       const sigPool = allSigs.filter((s) => !usedSig.has(s));
       const signature = pins.signature || pick(r, sigPool.length ? sigPool : allSigs);
-      const c = { family, borrow, discipline, hue, signature };
+      const strategy = pins.strategy || weighted(r, STRATEGY_WEIGHTS[mode] || STRATEGY_WEIGHTS.persuade);
+      const c = { family, borrow, discipline, hue, signature, strategy };
       const pinnedAll = pins.family && pins.hue !== undefined;
       const banned = BANNED.find((b) => b.test(c));
       if (banned && !pinnedAll) continue;     // 사용자가 고정한 조합이면 허용
@@ -196,6 +221,9 @@ function describe(h, n, rule = {}) {
   return {
     n, family: h.family, familyName: fam.name, borrow: h.borrow, dominant: h.borrow[0].axis,
     discipline: h.discipline, disciplineDesc: DISCIPLINES[h.discipline], hue: h.hue, signature: h.signature, axes, warning: h.warning,
+    strategy: h.strategy, strategyDesc: COLOR_STRATEGIES[h.strategy],
+    // 따뜻한 황토·테라코타 색상: 크림·종이 바탕과 짝지으면 Claude 자신의 기본값(visual-quality.md 7절)
+    caution: h.hue >= 20 && h.hue <= 85 ? "색상이 황토·테라코타 범위: 크림·종이 바탕과 짝짓지 말 것 (Claude 기본값)" : null,
     palette: `node palette.mjs --seed ${h.hue}`,
   };
 }
@@ -204,6 +232,7 @@ function validatePins(p) {
   if (p.family && !FAMILIES[p.family]) throw usage(`family는 ${Object.keys(FAMILIES).join(", ")} 중 하나`);
   if (p.from && !FAMILIES[p.from]) throw usage(`from은 계열 id`);
   if (p.borrow && !AXES.includes(p.borrow)) throw usage(`borrow는 ${AXES.join(", ")} 중 하나`);
+  if (p.strategy && !COLOR_STRATEGIES[p.strategy]) throw usage(`strategy는 ${Object.keys(COLOR_STRATEGIES).join(", ")} 중 하나`);
   if (p.discipline && !DISCIPLINES[p.discipline]) throw usage(`discipline은 ${Object.keys(DISCIPLINES).join(", ")} 중 하나`);
   if (p.hue !== undefined && !(Number(p.hue) >= 0 && Number(p.hue) <= 360)) throw usage("hue는 0–360");
   if (p.from && p.family && p.from === p.family) throw usage("from은 family와 달라야 합니다");
@@ -237,7 +266,8 @@ function main() {
       console.log(`후보 ${h.n}: ${h.familyName} 바탕 + ${h.borrow.map((b) => `${AXIS_KO[b.axis]}은 ${FAMILIES[b.from].name}에서`).join(", ")}`);
       for (const a of AXES) console.log(`  ${AXIS_KO[a]}${h.dominant === a ? "(지배)" : ""}: ${h.axes[a].value}${h.axes[a].borrowed ? `  ← ${FAMILIES[h.axes[a].from].name}` : ""}`);
       console.log(`  구성 방식: ${h.disciplineDesc}`);
-      console.log(`  기준 색상: ${h.hue}°  (${h.palette})`);
+      console.log(`  색 전략: ${h.strategyDesc}`);
+      console.log(`  기준 색상: ${h.hue}°  (${h.palette})${h.caution ? `  ⚠ ${h.caution}` : ""}`);
       console.log(`  시그니처 종류: ${h.signature}`);
       if (h.warning) console.log(`  ⚠ ${h.warning}`);
       console.log("");
