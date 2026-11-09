@@ -28,6 +28,17 @@ station    #FFFFFF   정거장 원 안쪽
 muted      #6B6B66   보조 텍스트
 ```
 
+```contrast
+text     bg      4.5
+muted    bg      4.5
+station  line-1  4.5
+line-1   bg      3.0
+line-2   bg      3.0
+line-3   bg      3.0
+```
+
+`station`(흰색)은 버튼 글자색으로도 씁니다. 노선 색은 선·도형 용도라 비텍스트 기준(3.0)으로 봅니다.
+
 노선 색은 분류 의미가 있을 때만 씁니다. 장식으로 색을 늘리지 않습니다.
 
 ## 구성

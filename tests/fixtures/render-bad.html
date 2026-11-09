@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body { margin: 0; background: #f2f2ee; color: #1e2a47; font: 16px/1.6 sans-serif; }
+  .shape { position: absolute; left: 0; top: 0; width: 300px; height: 160px; background: #2d4fa0; }
+  .over { position: relative; padding: 24px; }
+  .wide { width: 900px; height: 10px; background: #ccc; }
+  .chip { display: inline-block; padding: 2px 6px; font-size: 13px; }
+  .mono { font-family: "NoSuchLatinOnlyFont", monospace; }
+  .btn { outline: none; padding: 4px 8px; border: 1px solid #333; background: #fff; }
+  .pale { color: #b8b8b0; }
+</style>
+</head>
+<body>
+  <div class="shape" aria-hidden="true"></div>
+  <p class="over">파란 도형 위의 남색 본문은 읽기 어렵다</p>
+  <p class="pale">연한 회색 본문은 대비가 낮다</p>
+  <svg viewBox="0 0 1200 200" width="300" role="img" aria-label="축 라벨이 작은 차트"><text x="10" y="100" font-size="24">축 라벨</text></svg>
+  <p class="mono">고정폭 지정에 한글</p>
+  <div class="wide"></div>
+  <button class="btn">작음</button>
+</body>
+</html>

@@ -1,0 +1,363 @@
+#!/usr/bin/env node
+// library.mjs — WebD 컴포넌트 라이브러리. 의존성 없음, Node 18+.
+//
+// 라이브러리 폴더(기본 ~/.webd/library, 바꾸려면 --lib 또는 WEBD_LIBRARY):
+//   <id>/component.html     단독으로 열리는 HTML (컴포넌트 + 필요한 CSS·토큰)
+//   <id>/meta.json          이름, 분류, 태그, 저장·수정 시각, 출처, 원래 배경색(background) 등
+//   <id>/history/*.html     덮어쓰기 전 버전
+//   .trash/                 remove로 옮긴 항목 (바로 지우지 않음)
+//   index.html              목록 갤러리 (save·remove 때마다 다시 만듦)
+//
+// 명령:
+//   save   --file <html> --name <이름> [--id <id>] [--category <분류>] [--tags a,b] [--desc <설명>]
+//          [--project <프로젝트>] [--source <원본 파일>] [--style <디자인 근거>] [--viewport 1200x720]
+//   list   [--sort created|updated|name|category] [--order asc|desc] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+//          [--category <분류>] [--tag <태그>] [--q <검색어>] [--json]
+//   show   <id>
+//   remove <id>
+//   index
+//   path
+//   edit   <id> [--port <번호>] [--no-open]   브라우저에서 CSS를 직접 고치고 저장하는 로컬 편집 서버 (Ctrl+C로 닫음)
+//
+// 종료 코드: 0 성공 · 1 사용 오류 · 3 대상 없음
+
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, renameSync, copyFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { spawn } from "node:child_process";
+import { renderGallery } from "./gallery.mjs";
+
+export const CATEGORIES = ["hero", "nav", "button", "form", "table", "chart", "card", "list", "section", "footer", "feedback", "other"];
+const SORT_KEYS = ["created", "updated", "name", "category"];
+
+// ---------- 시간 ----------
+
+/** 로컬 시간대 오프셋을 붙인 ISO 문자열. 예: 2026-11-09T14:03:00+09:00 */
+export function localIso(d = new Date()) {
+  const pad = (n) => String(Math.abs(n)).padStart(2, "0");
+  const off = -d.getTimezoneOffset();
+  const sign = off >= 0 ? "+" : "-";
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    `${sign}${pad(Math.trunc(off / 60))}:${pad(off % 60)}`;
+}
+const datePart = (iso) => iso.slice(0, 10);
+
+// ---------- 라이브러리 접근 ----------
+
+export function libDir(opt) {
+  return resolve(opt || process.env.WEBD_LIBRARY || join(homedir(), ".webd", "library"));
+}
+
+export function loadEntries(lib) {
+  if (!existsSync(lib)) return [];
+  const out = [];
+  for (const name of readdirSync(lib)) {
+    if (name.startsWith(".")) continue;
+    const metaPath = join(lib, name, "meta.json");
+    if (!existsSync(metaPath)) continue;
+    try { out.push(JSON.parse(readFileSync(metaPath, "utf8"))); }
+    catch { process.stderr.write(`경고: meta.json을 읽지 못함 — ${metaPath}\n`); }
+  }
+  return out;
+}
+
+export function slugify(name) {
+  // 한글 음절은 남긴다. NFKD는 한글을 자모로 쪼개므로 NFC로 맞춘다.
+  const s = name.normalize("NFC").toLowerCase().replace(/[^a-z0-9가-힣]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  return s || "component";
+}
+
+function uniqueId(lib, base) {
+  let id = base, n = 2;
+  while (existsSync(join(lib, id))) id = `${base}-${n++}`;
+  return id;
+}
+
+/** 조각(fragment)이면 단독으로 열리는 문서로 감싼다. */
+export function ensureDocument(html, title) {
+  if (/<html[\s>]/i.test(html)) return html;
+  return `<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+</head>
+<body>
+${html.trim()}
+</body>
+</html>
+`;
+}
+function escapeHtml(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
+
+// ---------- 원래 배경색 ----------
+
+/**
+ * 문서의 원래 페이지 배경(body, 없으면 html·:root)을 찾는다.
+ * 최상위 규칙만 본다(@media 안은 건너뜀). var(--x)는 :root·html의 값으로 푼다. body의 style 속성이 가장 우선.
+ * 색 하나를 찾으면 그 색, 그라디언트·이미지면 값 그대로(최대 120자), 지정이 없거나 transparent면 null.
+ */
+export function detectBackground(html) {
+  const src = String(html).replace(/<!--[\s\S]*?-->/g, "");
+  const css = [...src.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join("\n").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rules = topLevelRules(css);
+  const vars = {};
+  const pick = { body: null, html: null };
+  for (const { sel, body } of rules) {
+    const sels = sel.split(",").map((s) => s.trim().toLowerCase());
+    const decls = declarations(body);
+    if (sels.some((s) => s === ":root" || s === "html")) for (const [k, v] of decls) if (k.startsWith("--")) vars[k] = v;
+    for (const [k, v] of decls) {
+      if (k !== "background" && k !== "background-color") continue;
+      if (sels.includes("body")) pick.body = v;
+      else if (sels.includes("html") || sels.includes(":root")) pick.html = v;
+    }
+  }
+  const inline = /<body\b[^>]*\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i.exec(src);
+  if (inline) for (const [k, v] of declarations(inline[2] ?? inline[3])) if (k === "background" || k === "background-color") pick.body = v;
+  let value = pick.body ?? pick.html;
+  if (!value) return null;
+  for (let i = 0; i < 8 && /var\(/.test(value); i++) {
+    value = value.replace(/var\(\s*(--[\w-]+)\s*(?:,\s*([^()]*(?:\([^()]*\))?[^()]*))?\)/g, (_, name, fb) => vars[name] ?? (fb ?? "").trim());
+  }
+  value = value.replace(/!important/i, "").trim();
+  if (!value || /^(transparent|none|inherit|initial|unset|revert)$/i.test(value)) return null;
+  if (!/gradient\(|url\(/i.test(value)) {
+    const color = /#[0-9a-f]{3,8}\b|(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)/i.exec(value);
+    if (color) return color[0];
+    if (/^[a-z]+$/i.test(value)) return value.toLowerCase();
+  }
+  return value.slice(0, 120);
+}
+
+function topLevelRules(css) {
+  const out = [];
+  let depth = 0, start = 0, sel = "";
+  for (let i = 0; i < css.length; i++) {
+    const c = css[i];
+    if (c === "{") { if (depth === 0) { sel = css.slice(start, i).trim(); start = i + 1; } depth++; }
+    else if (c === "}") {
+      depth = Math.max(0, depth - 1);
+      if (depth === 0) { if (!sel.startsWith("@")) out.push({ sel, body: css.slice(start, i) }); start = i + 1; }
+    } else if (c === ";" && depth === 0) start = i + 1; // @import 같은 최상위 문장
+  }
+  return out;
+}
+
+function declarations(body) {
+  const out = [];
+  for (const part of body.split(/;(?![^(]*\))/)) {
+    const k = part.indexOf(":");
+    if (k < 0) continue;
+    out.push([part.slice(0, k).trim().toLowerCase(), part.slice(k + 1).trim()]);
+  }
+  return out;
+}
+
+function parseViewport(v) {
+  const m = /^(\d{3,4})x(\d{2,4})$/.exec(v || "");
+  if (!m) return null;
+  return { width: Number(m[1]), height: Number(m[2]) };
+}
+
+// ---------- 명령 ----------
+
+export function save(lib, o) {
+  if (!o.file) throw usage("save에는 --file이 필요합니다.");
+  if (!o.name && !o.id) throw usage("save에는 --name이 필요합니다.");
+  if (!existsSync(o.file)) throw usage(`파일이 없음: ${o.file}`);
+  if (o.category && !CATEGORIES.includes(o.category)) throw usage(`분류는 ${CATEGORIES.join(", ")} 중 하나입니다.`);
+  const viewport = o.viewport ? parseViewport(o.viewport) : null;
+  if (o.viewport && !viewport) throw usage("--viewport는 1200x720 형식입니다.");
+
+  mkdirSync(lib, { recursive: true });
+  const now = localIso();
+  const existing = o.id && existsSync(join(lib, o.id, "meta.json"))
+    ? JSON.parse(readFileSync(join(lib, o.id, "meta.json"), "utf8")) : null;
+
+  const id = existing ? existing.id : uniqueId(lib, o.id || `${now.slice(0, 10).replace(/-/g, "")}-${slugify(o.name)}`);
+  const dir = join(lib, id);
+  mkdirSync(dir, { recursive: true });
+
+  const name = o.name || existing?.name;
+  const html = ensureDocument(readFileSync(o.file, "utf8"), name);
+
+  let versions = existing?.versions ?? 1;
+  if (existing) {
+    const hist = join(dir, "history");
+    mkdirSync(hist, { recursive: true });
+    // 같은 초에 여러 번 저장해도 이전 버전이 덮이지 않게 이름이 겹치면 번호를 붙인다.
+    const stem = existing.updatedAt.replace(/[:+]/g, "");
+    let histName = `${stem}.html`, k = 2;
+    while (existsSync(join(hist, histName))) histName = `${stem}-${k++}.html`;
+    copyFileSync(join(dir, "component.html"), join(hist, histName));
+    versions += 1;
+  }
+  writeFileSync(join(dir, "component.html"), html);
+
+  const meta = {
+    id,
+    name,
+    description: o.desc ?? existing?.description ?? "",
+    category: o.category ?? existing?.category ?? "other",
+    tags: o.tags ? o.tags.split(",").map((t) => t.trim()).filter(Boolean) : (existing?.tags ?? []),
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+    versions,
+    source: {
+      project: o.project ?? existing?.source?.project ?? "",
+      file: o.source ?? existing?.source?.file ?? "",
+    },
+    style: o.style ?? existing?.style ?? "",
+    viewport: viewport ?? existing?.viewport ?? { width: 1200, height: 720 },
+    background: detectBackground(html),
+    bytes: Buffer.byteLength(html),
+  };
+  writeFileSync(join(dir, "meta.json"), JSON.stringify(meta, null, 2) + "\n");
+  writeIndex(lib);
+  return { meta, updated: Boolean(existing), dir };
+}
+
+export function query(entries, o = {}) {
+  const sort = o.sort || "created";
+  if (!SORT_KEYS.includes(sort)) throw usage(`정렬은 ${SORT_KEYS.join(", ")} 중 하나입니다.`);
+  const order = o.order || (sort === "name" || sort === "category" ? "asc" : "desc");
+  if (!["asc", "desc"].includes(order)) throw usage("순서는 asc 또는 desc입니다.");
+  for (const d of [o.since, o.until]) if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) throw usage("기간은 YYYY-MM-DD 형식입니다.");
+
+  const dateKey = sort === "updated" ? "updatedAt" : "createdAt";
+  const q = (o.q || "").toLowerCase();
+  let list = entries.filter((e) => {
+    const day = datePart(e[dateKey]);
+    if (o.since && day < o.since) return false;
+    if (o.until && day > o.until) return false;
+    if (o.category && e.category !== o.category) return false;
+    if (o.tag && !e.tags.includes(o.tag)) return false;
+    if (q && ![e.name, e.description, e.id, ...e.tags].join(" ").toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const key = { created: (e) => e.createdAt, updated: (e) => e.updatedAt, name: (e) => e.name, category: (e) => `${e.category}\u0000${e.name}` }[sort];
+  list.sort((a, b) => key(a).localeCompare(key(b), "ko") || a.id.localeCompare(b.id));
+  if (order === "desc") list.reverse();
+  return list;
+}
+
+export function remove(lib, id) {
+  const dir = join(lib, id);
+  if (!id || !existsSync(join(dir, "meta.json"))) return null;
+  const trash = join(lib, ".trash");
+  mkdirSync(trash, { recursive: true });
+  const dest = join(trash, `${id}-${localIso().replace(/[:+]/g, "")}`);
+  renameSync(dir, dest);
+  writeIndex(lib);
+  return dest;
+}
+
+export function writeIndex(lib) {
+  mkdirSync(lib, { recursive: true });
+  const entries = loadEntries(lib).map((e) => {
+    const html = readFileSync(join(lib, e.id, "component.html"), "utf8");
+    // 배경 기록이 없는 예전 항목은 meta를 고치지 않고 여기서만 계산해 목록에 쓴다.
+    const background = "background" in e ? e.background : detectBackground(html);
+    return { ...e, background, html, path: join(lib, e.id, "component.html") };
+  });
+  const out = join(lib, "index.html");
+  writeFileSync(out, renderGallery(entries, { libPath: lib, generatedAt: localIso(), categories: CATEGORIES, cli: fileURLToPath(import.meta.url) }));
+  return out;
+}
+
+// ---------- CLI ----------
+
+function usage(msg) { const e = new Error(msg); e.code = 1; return e; }
+
+function parseArgs(argv) {
+  const [cmd, ...rest] = argv;
+  const o = { _: [] };
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === "--json") o.json = true;
+    else if (a === "--no-open") o.noOpen = true;
+    else if (a.startsWith("--")) {
+      const [k, v] = a.includes("=") ? [a.slice(2, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a.slice(2), rest[++i]];
+      if (v === undefined) throw usage(`${a}에 값이 없습니다.`);
+      o[k] = v;
+    } else o._.push(a);
+  }
+  return { cmd, o };
+}
+
+function fmtDate(iso) { return iso.slice(0, 16).replace("T", " "); }
+/** 터미널 표시 폭 기준으로 채운다. 한글·전각 문자는 2칸. */
+function padWide(s, width) {
+  const w = [...s].reduce((n, ch) => n + (/[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/.test(ch) ? 2 : 1), 0);
+  return s + " ".repeat(Math.max(1, width - w));
+}
+
+function openBrowser(url) {
+  const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
+    : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
+  try { spawn(cmd, args, { stdio: "ignore", detached: true, windowsVerbatimArguments: false }).unref(); } catch {}
+}
+
+function main() {
+  let cmd, o;
+  try { ({ cmd, o } = parseArgs(process.argv.slice(2))); } catch (e) { console.error(e.message); return 1; }
+  const lib = libDir(o.lib);
+  try {
+    switch (cmd) {
+      case "save": {
+        const r = save(lib, o);
+        console.log(`${r.updated ? "갱신" : "저장"}: ${r.meta.id} (${r.meta.name})`);
+        console.log(`  파일: ${join(r.dir, "component.html")}`);
+        console.log(`  목록: ${join(lib, "index.html")}`);
+        return 0;
+      }
+      case "list": {
+        const list = query(loadEntries(lib), o);
+        if (o.json) { console.log(JSON.stringify(list, null, 2)); return 0; }
+        console.log(`라이브러리: ${lib}  (${list.length}개)`);
+        for (const e of list) {
+          console.log(`${padWide(e.id, 40)}${e.category.padEnd(9)} 저장 ${fmtDate(e.createdAt)}  수정 ${fmtDate(e.updatedAt)}  ${e.name}${e.tags.length ? `  #${e.tags.join(" #")}` : ""}`);
+        }
+        return 0;
+      }
+      case "show": {
+        const id = o._[0];
+        const p = join(lib, id ?? "", "meta.json");
+        if (!id || !existsSync(p)) { console.error(`없는 항목: ${id ?? "(id 없음)"}`); return 3; }
+        const meta = JSON.parse(readFileSync(p, "utf8"));
+        console.log(JSON.stringify({ ...meta, file: join(lib, id, "component.html") }, null, 2));
+        return 0;
+      }
+      case "remove": {
+        const dest = remove(lib, o._[0]);
+        if (!dest) { console.error(`없는 항목: ${o._[0] ?? "(id 없음)"}`); return 3; }
+        console.log(`휴지통으로 옮김: ${dest}`);
+        return 0;
+      }
+      case "index": console.log(writeIndex(lib)); return 0;
+      case "path": console.log(lib); return 0;
+      case "edit": {
+        const id = o._[0];
+        if (!id || !existsSync(join(lib, id, "meta.json"))) { console.error(`없는 항목: ${id ?? "(id 없음)"}`); return 3; }
+        const port = o.port ? Number(o.port) : 0;
+        if (!Number.isInteger(port) || port < 0 || port > 65535) throw usage("--port는 0~65535 정수입니다.");
+        import("./editor-server.mjs").then(({ startEditor }) => startEditor({ lib, id, port })).then((ed) => {
+          console.log(`편집 서버: ${ed.url}`);
+          console.log("  화면에서 저장하면 새 버전으로 저장되고 이전 파일은 history/에 남습니다. 닫으려면 Ctrl+C.");
+          if (!o.noOpen) openBrowser(ed.url);
+          const stop = () => ed.close().then(() => { console.log("편집 서버를 닫았습니다."); process.exit(0); });
+          process.on("SIGINT", stop); process.on("SIGTERM", stop);
+        }).catch((e) => { console.error(`편집 서버를 열지 못함: ${e.message}`); process.exit(e.code === 3 ? 3 : 1); });
+        return 0;
+      }
+      default:
+        console.error("명령: save | list | show <id> | remove <id> | index | path | edit <id>  (자세한 옵션은 파일 머리 주석)");
+        return 1;
+    }
+  } catch (e) { console.error(e.message); return e.code ?? 1; }
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) process.exitCode = main();

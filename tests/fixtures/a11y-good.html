@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  .wrap { max-width: 1200px; width: min(100%, 1200px); }
+  .hero { min-height: 100dvh; }
+  button:focus-visible, a:focus-visible { outline: 2px solid #333; }
+</style>
+</head>
+<body>
+  <div class="wrap hero">
+    <h1>설정</h1>
+    <h2>알림</h2>
+    <h3>이메일 알림</h3>
+    <label for="email">이메일</label>
+    <input id="email" type="email" placeholder="name@example.com">
+    <label>이름 <input type="text" placeholder="홍길동"></label>
+    <input type="search" aria-label="검색" placeholder="검색어">
+    <div role="button" tabindex="0" onclick="save()">저장</div>
+    <button type="button">저장</button>
+    <a href="/help">도움말 문서 보기</a>
+    <video src="a.mp4" autoplay muted loop playsinline></video>
+  </div>
+</body>
+</html>

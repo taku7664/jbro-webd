@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #f6f3ee;
+    --text: #1d1b18;
+    --accent: #0b6e4f;
+    --black: #000;
+    --white: #fff;
+  }
+  body { font-family: "Pretendard", "Fraunces", serif; background: var(--bg); color: var(--text); }
+  /* 주석 안의 border-left: 6px 와 background-clip: text 는 무시돼야 한다 */
+  blockquote { border-left: 4px solid var(--accent); padding-left: 1rem; }
+  .card { box-shadow: 0 6px 20px -8px rgba(40, 30, 20, .25); }
+  a:focus-visible, button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+  button { outline: none; transition: background-color .2s ease-out; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+  <main>
+    <h1>원두 포대에서 바로 온 커피</h1>
+    <p>매달 둘째 주 화요일, 로스팅 후 사흘 안에 보냅니다.</p>
+    <blockquote>산미가 밝은 원두를 좋아한다면 첫 달은 에티오피아로 시작하세요.</blockquote>
+    <img src="bag.jpg" alt="스텐실 글씨가 찍힌 삼베 원두 포대">
+    <img src="divider.svg" alt="">
+    <a href="#plans">구독 플랜 보기</a>
+  </main>
+</body>
+</html>
