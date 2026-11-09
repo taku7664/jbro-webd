@@ -16,8 +16,9 @@ description: 웹 UI를 만들거나 다시 디자인하거나 비평·감사·�
 1. **접근성 하한선**: 대비, 키보드 포커스, reduced-motion, 확대 허용. 어떤 지정도 넘지 못합니다.
 2. **사용자가 고정(pin)한 것**: 직접 말한 서체·색·스타일 이름·레퍼런스·시대·재질. 금지 목록에 있는 항목이라도 사용자가 원하면 따릅니다. 분명한 브리프를 내 취향으로 돌리는 것은 실패입니다.
 3. **선택한 스타일 사양**(`styles/`) 또는 잠근 `DESIGN.md`
-4. **AI 티 목록**(`reference/ai-tells.md`): 사용자가 비워 둔 축에서만
-5. **업종·관례 기본값**: 마지막 수단. 쓸 때는 쓴다고 밝힘
+4. **사용자 기본 취향**(`taste/`): 사용자가 레퍼런스로 고른 기본 미감. 웹은 `taste/web.md`, 게임 UI는 `taste/game.md`. 브리프가 시각 방향을 비워 두면 여기서 출발합니다. AI 티 목록과 겹쳐도 이쪽이 이깁니다.
+5. **AI 티 목록**(`reference/ai-tells.md`): 사용자가 비워 둔 축에서만
+6. **업종·관례 기본값**: 마지막 수단. 쓸 때는 쓴다고 밝힘
 
 ## 명령
 
@@ -54,7 +55,7 @@ description: 웹 UI를 만들거나 다시 디자인하거나 비평·감사·�
 | 단계 | 할 일 | 읽을 파일 |
 |---|---|---|
 | 맥락 | 대상·목표·화면 모드·화면 구조, `PRODUCT.md` | `reference/context.md`, `reference/modes.md`, `reference/structure.md` (흐릿하면 `ops/shape.md`) |
-| 방향 | 스타일·레퍼런스 이미지·레퍼런스 충돌·기존 화면 중 하나로 4축 + 시그니처, `DESIGN.md` 잠금 | `reference/direction.md`, 필요하면 `styles/INDEX.md` |
+| 방향 | 스타일·레퍼런스 이미지·레퍼런스 충돌·기존 화면 중 하나로 4축 + 시그니처, `DESIGN.md` 잠금. 브리프가 방향을 비워 두면 사용자 기본 취향(`taste/`)에서 출발 | `reference/direction.md`, `taste/web.md` 또는 `taste/game.md`, 필요하면 `styles/INDEX.md` |
 | 구현 | 1차 구조·콘텐츠 → 2차 글자·색·간격 | `reference/build.md`, **UI 코드를 고치기 직전에** `reference/craft-floor.md`와 `reference/visual-quality.md` |
 | 검증 | 자동 검사 → 렌더 → 다른 눈의 비평 → 수정 스펙 | `reference/verify.md`, `reference/ai-tells.md`, `reference/visual-quality.md` |
 
@@ -81,6 +82,7 @@ description: 웹 UI를 만들거나 다시 디자인하거나 비평·감사·�
 
 ## 요청별 진입점
 
+- **게임 UI**(메뉴, HUD, 인벤토리, 스킬 트리, 캐릭터 화면 등): Play 모드(`reference/modes.md`), `taste/game.md`, `reference/surfaces/game.md`. 결과는 HTML/CSS 시안, 16:9, 키보드·패드 조작.
 - **새 화면·새 프로젝트**: 새 작업 흐름. `PRODUCT.md`가 있으면 읽고 맥락 단계를 건너뜀.
 - **도구 화면**(편집기, 조합기, 생성기, 관리 화면, 설정 등 사용자가 무언가를 만들거나 고치는 화면): `structure.md`로 구조를 먼저 정하고, 홈페이지식 구성으로 끌려가지 않았는지 「페이지형 쏠림 점검」으로 확인.
 - **스타일 이름 지정**("bento 스타일로", "영수증 스타일로"): `styles/INDEX.md`에서 파일 하나만 찾아 읽음. 없으면 가까운 스타일 2–3개 제안.

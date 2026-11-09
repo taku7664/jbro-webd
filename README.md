@@ -49,7 +49,7 @@ skills/webd/
     ops/               작업 명령: critique, audit, polish, harden, onboard, optimize, shape,
                        refine(typeset·layout·colorize·animate·clarify·adapt),
                        intensity(bolder·quieter·distill·delight·overdrive), system(extract·document)
-    surfaces/          구조 질문에 미리 답한 예시: landing, pricing, dashboard, forms, docs, portfolio, states
+    surfaces/          구조 질문에 미리 답한 예시: landing, pricing, dashboard, forms, docs, portfolio, states, game(게임 UI)
   scripts/
     detect.mjs         정적 검출기 35규칙
     render-check.mjs   렌더 검사 (설치된 Chrome·Edge 헤드리스, Node 22+)
@@ -59,6 +59,7 @@ skills/webd/
     image-tokens.mjs   레퍼런스 이미지의 색을 실제 픽셀로 측정 (경로 B)
     css-inventory.mjs  CSS에 쓰인 값을 세어 토큰 후보·흩어진 값 표시 (경로 D, audit)
   styles/              이름으로 부르는 스타일 20종 + INDEX.md + _template.md
+  taste/               사용자 기본 취향(레퍼런스에서 측정): web.md, game.md. 브리프가 방향을 비우면 출발점
   templates/
     PRODUCT.md
     DESIGN.md
