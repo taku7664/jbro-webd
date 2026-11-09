@@ -1,0 +1,17 @@
+{
+  "name": "jbro-webd",
+  "owner": {
+    "name": "PPAK_JU"
+  },
+  "metadata": {
+    "description": "jbro-webd의 Claude Code 플러그인 배포처"
+  },
+  "plugins": [
+    {
+      "name": "jbro-webd",
+      "source": "./",
+      "description": "AI 티 나지 않는 웹 UI를 설계·구현·검증하는 WebD 스킬",
+      "version": "0.0.1"
+    }
+  ]
+}

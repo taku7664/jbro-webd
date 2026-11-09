@@ -1,0 +1,6 @@
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+# 스킬 테스트 중 생기는 산출물
+.webd-scratch/
