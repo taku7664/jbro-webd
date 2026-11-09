@@ -9,6 +9,9 @@
 // 사용법:
 //   node dealer.mjs --project "둘째화요일" --seed-date 2026-11-09 --candidates 3
 //   node dealer.mjs --project x --seed-date 2026-11-09 --pin family=swiss --pin hue=150 --reroll 1 --json
+//   node dealer.mjs --project x --seed-date 2026-11-09 --mode operate --structure workbench
+// --mode(persuade|operate|read|experience)와 --structure(reference/structure.md 유형)를 주면
+// 그 화면에 맞지 않는 바탕 계열·구성 방식·시그니처·빌릴 축을 패에서 뺀다. 도구 화면에 포스터 구성이 나오지 않게.
 // --pin 가능한 축: family, borrow(type|color|composition|motion), from(계열 id), discipline, hue(0-360), signature
 // 종료 코드: 0 성공, 1 사용 오류, 3 조건을 만족하는 패를 만들 수 없음
 
@@ -59,6 +62,37 @@ export const SIGNATURES = [
   "인쇄물의 흔적(판 어긋남, 재단선, 접힌 자국) 하나",
 ];
 
+// 화면 모드별 제한 (reference/modes.md). 없는 키는 제한 없음.
+export const MODE_RULES = {
+  persuade: {},
+  operate: {
+    families: ["swiss", "terminal", "data", "wayfinding", "editorial", "neobrutal", "softfuture"],
+    disciplines: ["strict-grid", "asymmetric-split", "dense-panels", "ledger", "sidebar-reference"],
+    borrowWeights: { color: 0.65, type: 0.35 },
+    excludeSignatures: ["여백에 매단 거대한 순서 번호 (내용이 실제 순서일 때만)", "한 번만 일어나는 진입 연출 하나", "모든 이미지를 같은 고유 도형으로 자르기", "의도적으로 어긋난 정렬선 하나", "인쇄물의 흔적(판 어긋남, 재단선, 접힌 자국) 하나", "섹션을 잇는 하나의 연속된 선"],
+    fixed: { composition: "아래 구성 방식을 따름. 계열 고유의 구성(넓은 여백·포스터 덩어리 등)은 쓰지 않고 선·면 처리만 가져옴 (Operate 고정)", motion: "상태 변화만, 150–250ms (Operate 고정)" },
+    note: "타입을 빌렸다면 대상 이름·영역 제목에만 씁니다. 라벨·버튼·입력·데이터는 본문 고딕 (modes.md Operate).",
+  },
+  read: {
+    disciplines: ["single-column", "sidebar-reference", "strict-grid", "asymmetric-split", "timeline"],
+    excludeSignatures: ["한 번만 일어나는 진입 연출 하나", "의도적으로 어긋난 정렬선 하나"],
+    note: "세계는 틀(머리·내비·제목)에, 본문 칼럼은 차분하게 (modes.md Read).",
+  },
+  experience: {
+    disciplines: ["gallery-wall", "full-bleed", "poster-blocks", "asymmetric-split", "single-column", "timeline"],
+  },
+};
+
+// 화면 구조 유형별 구성 방식 (reference/structure.md). 모드 제한과 겹치는 것만 남긴다.
+export const STRUCTURE_DISCIPLINES = {
+  page: null,
+  monitor: ["dense-panels", "strict-grid", "ledger"],
+  input: ["single-column", "strict-grid"],
+  "list-detail": ["sidebar-reference", "asymmetric-split", "ledger"],
+  workbench: ["asymmetric-split", "dense-panels", "sidebar-reference"],
+  steps: ["single-column", "timeline", "strict-grid"],
+};
+
 const AXES = ["type", "color", "composition", "motion"];
 const BORROW_WEIGHTS = { type: 0.4, motion: 0.3, color: 0.15, composition: 0.15 };
 
@@ -93,11 +127,24 @@ function weighted(r, weights, exclude = []) {
 
 export const GOLDEN = 137.508;
 
-export function deal({ project, seedDate, candidates = 3, reroll = 0, pins = {} }) {
+export function deal({ project, seedDate, candidates = 3, reroll = 0, pins = {}, mode, structure }) {
   if (!project) throw usage("--project가 필요합니다.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(seedDate || "")) throw usage("--seed-date는 YYYY-MM-DD (재현 기준 날짜, 시계를 쓰지 않음)");
   if (!(candidates >= 1 && candidates <= 6)) throw usage("--candidates는 1–6");
   validatePins(pins);
+  if (mode !== undefined && !MODE_RULES[mode]) throw usage(`--mode는 ${Object.keys(MODE_RULES).join(", ")} 중 하나`);
+  const structs = structure === undefined ? [] : String(structure).split(",").map((x) => x.trim()).filter(Boolean);
+  for (const st of structs) if (!(st in STRUCTURE_DISCIPLINES)) throw usage(`--structure는 ${Object.keys(STRUCTURE_DISCIPLINES).join(", ")} 중 하나 (여럿이면 쉼표)`);
+  const rule = MODE_RULES[mode] || {};
+  const allFamilies = rule.families || Object.keys(FAMILIES);
+  let allDisc = rule.disciplines || Object.keys(DISCIPLINES);
+  // 구조가 여럿이면 모두에 맞는 구성 방식(교집합), 없으면 합집합
+  const lists = structs.map((st) => STRUCTURE_DISCIPLINES[st]).filter(Boolean);
+  let sDisc = null;
+  if (lists.length) { const inter = lists.reduce((a, b) => a.filter((d) => b.includes(d))); sDisc = inter.length ? inter : [...new Set(lists.flat())]; }
+  if (sDisc) { const both = allDisc.filter((d) => sDisc.includes(d)); allDisc = both.length ? both : sDisc; }
+  const allSigs = SIGNATURES.filter((x) => !(rule.excludeSignatures || []).includes(x));
+  const borrowWeights = rule.borrowWeights || BORROW_WEIGHTS;
 
   const r = rng(`${project}|${seedDate}|${reroll}`);
   const baseHue = pins.hue !== undefined ? Number(pins.hue) : Math.floor(r() * 360);
@@ -107,24 +154,25 @@ export function deal({ project, seedDate, candidates = 3, reroll = 0, pins = {} 
   for (let i = 0; i < candidates; i++) {
     let hand = null;
     for (let attempt = 0; attempt < 200 && !hand; attempt++) {
-      const familyPool = Object.keys(FAMILIES).filter((f) => !usedFamilies.has(f) || Object.keys(FAMILIES).length <= usedFamilies.size);
-      const family = pins.family || pick(r, familyPool);
+      const famLeft = allFamilies.filter((f) => !usedFamilies.has(f));
+      const family = pins.family || pick(r, famLeft.length ? famLeft : allFamilies);
       const n = pins.borrow ? 1 : r() < 0.3 ? 2 : 1;
       const borrow = [];
       for (let k = 0; k < n; k++) {
         const exclude = borrow.map((b) => b.axis);
         if (borrow.some((b) => b.axis === "color")) exclude.push("composition");     // 색과 구성은 같이 빌리지 않음
         if (borrow.some((b) => b.axis === "composition")) exclude.push("color");
-        const axis = k === 0 && pins.borrow ? pins.borrow : weighted(r, BORROW_WEIGHTS, exclude);
+        if (Object.keys(borrowWeights).every((a) => exclude.includes(a))) break;
+        const axis = k === 0 && pins.borrow ? pins.borrow : weighted(r, borrowWeights, exclude);
         const fromPool = Object.keys(FAMILIES).filter((f) => f !== family);
         const from = k === 0 && pins.from ? pins.from : pick(r, fromPool);
         borrow.push({ axis, from });
       }
-      const discPool = Object.keys(DISCIPLINES).filter((d) => !usedDisc.has(d));
-      const discipline = pins.discipline || pick(r, discPool.length ? discPool : Object.keys(DISCIPLINES));
+      const discPool = allDisc.filter((d) => !usedDisc.has(d));
+      const discipline = pins.discipline || pick(r, discPool.length ? discPool : allDisc);
       const hue = pins.hue !== undefined ? Number(pins.hue) : Math.round((baseHue + GOLDEN * (i + attempt * 0.37)) % 360);
-      const sigPool = SIGNATURES.filter((s) => !usedSig.has(s));
-      const signature = pins.signature || pick(r, sigPool.length ? sigPool : SIGNATURES);
+      const sigPool = allSigs.filter((s) => !usedSig.has(s));
+      const signature = pins.signature || pick(r, sigPool.length ? sigPool : allSigs);
       const c = { family, borrow, discipline, hue, signature };
       const pinnedAll = pins.family && pins.hue !== undefined;
       const banned = BANNED.find((b) => b.test(c));
@@ -133,15 +181,16 @@ export function deal({ project, seedDate, candidates = 3, reroll = 0, pins = {} 
     }
     if (!hand) throw Object.assign(new Error("조건을 만족하는 패를 만들 수 없음 (pin을 줄여 보세요)"), { code: 3 });
     usedFamilies.add(hand.family); usedDisc.add(hand.discipline); usedSig.add(hand.signature);
-    hands.push(describe(hand, i + 1));
+    hands.push(describe(hand, i + 1, rule));
   }
-  return { project, seedDate, reroll, pins, hands };
+  return { project, seedDate, reroll, pins, mode: mode ?? null, structure: structure ?? null, note: rule.note ?? null, hands };
 }
 
-function describe(h, n) {
+function describe(h, n, rule = {}) {
   const fam = FAMILIES[h.family];
   const axes = Object.fromEntries(AXES.map((a) => {
     const b = h.borrow.find((x) => x.axis === a);
+    if (!b && rule.fixed?.[a]) return [a, { value: rule.fixed[a], from: "mode", borrowed: false }];
     return [a, b ? { value: FAMILIES[b.from][a], from: b.from, borrowed: true } : { value: fam[a], from: h.family, borrowed: false }];
   }));
   return {
@@ -175,13 +224,15 @@ function main() {
       else if (a === "--seed-date") { o.seedDate = v; i++; }
       else if (a === "--candidates") { o.candidates = Number(v); i++; }
       else if (a === "--reroll") { o.reroll = Number(v); i++; }
+      else if (a === "--mode") { o.mode = v; i++; }
+      else if (a === "--structure") { o.structure = v; i++; }
       else if (a === "--pin") { const [k, ...rest] = (v || "").split("="); if (!rest.length) throw usage("--pin은 축=값 형식"); o.pins[k] = rest.join("="); i++; }
       else if (a === "--list") { console.log(JSON.stringify({ families: Object.fromEntries(Object.entries(FAMILIES).map(([k, f]) => [k, f.name])), disciplines: DISCIPLINES, signatures: SIGNATURES }, null, 2)); return 0; }
       else throw usage(`알 수 없는 옵션: ${a}`);
     }
     const res = deal(o);
     if (o.json) { console.log(JSON.stringify(res, null, 2)); return 0; }
-    console.log(`딜: ${res.project} · ${res.seedDate} · reroll ${res.reroll}${Object.keys(res.pins).length ? ` · 고정 ${JSON.stringify(res.pins)}` : ""}\n`);
+    console.log(`딜: ${res.project} · ${res.seedDate} · reroll ${res.reroll}${res.mode ? ` · 모드 ${res.mode}` : ""}${res.structure ? ` · 구조 ${res.structure}` : ""}${Object.keys(res.pins).length ? ` · 고정 ${JSON.stringify(res.pins)}` : ""}\n`);
     for (const h of res.hands) {
       console.log(`후보 ${h.n}: ${h.familyName} 바탕 + ${h.borrow.map((b) => `${AXIS_KO[b.axis]}은 ${FAMILIES[b.from].name}에서`).join(", ")}`);
       for (const a of AXES) console.log(`  ${AXIS_KO[a]}${h.dominant === a ? "(지배)" : ""}: ${h.axes[a].value}${h.axes[a].borrowed ? `  ← ${FAMILIES[h.axes[a].from].name}` : ""}`);
@@ -191,6 +242,8 @@ function main() {
       if (h.warning) console.log(`  ⚠ ${h.warning}`);
       console.log("");
     }
+    if (res.note) console.log(`참고: ${res.note}
+`);
     console.log("받은 패를 다시 고르지 말고, 주제 세계의 레퍼런스 두 개로 정당화하고 구체화하세요 (direction.md 경로 C).");
     return 0;
   } catch (e) { console.error(e.message); return e.code ?? 1; }

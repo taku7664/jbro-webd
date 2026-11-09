@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generate, toHex, hexToOklch, oklchToRgb, fitGamut, contrast } from "../skills/webd/scripts/palette.mjs";
-import { deal, FAMILIES, BANNED } from "../skills/webd/scripts/dealer.mjs";
+import { deal, FAMILIES, BANNED, MODE_RULES, STRUCTURE_DISCIPLINES } from "../skills/webd/scripts/dealer.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scripts = join(here, "..", "skills", "webd", "scripts");
@@ -123,7 +123,42 @@ test("사용자가 AI 티 조합을 직접 고정하면 허용하고 경고한�
   assert.match(hands[0].warning, /시안/);
 });
 
+test("operate + workbench: 도구 화면에 맞는 패만 나눠 준다", () => {
+  const op = MODE_RULES.operate;
+  for (let r = 0; r < 40; r++) {
+    for (const h of deal({ project: "tool", seedDate: "2026-11-09", candidates: 3, reroll: r, mode: "operate", structure: "workbench" }).hands) {
+      assert.ok(op.families.includes(h.family), `바탕 ${h.family}`);
+      assert.ok(STRUCTURE_DISCIPLINES.workbench.includes(h.discipline), `구성 ${h.discipline}`);
+      assert.ok(!op.excludeSignatures.includes(h.signature), `시그니처 ${h.signature}`);
+      assert.ok(h.borrow.every((b) => ["color", "type"].includes(b.axis)), "빌리는 축은 색·타입만");
+      assert.equal(h.axes.motion.from, "mode");
+      assert.equal(h.axes.composition.from, "mode");
+      assert.ok(!["poster-blocks", "full-bleed", "single-column", "gallery-wall"].includes(h.discipline));
+    }
+  }
+});
+
+test("모드만 주면 그 모드의 구성 방식, 모드 없이 구조만 주면 구조의 구성 방식", () => {
+  for (let r = 0; r < 20; r++) {
+    for (const h of deal({ project: "doc", seedDate: "2026-11-09", reroll: r, mode: "read" }).hands) assert.ok(MODE_RULES.read.disciplines.includes(h.discipline));
+    for (const h of deal({ project: "mon", seedDate: "2026-11-09", reroll: r, structure: "monitor" }).hands) assert.ok(STRUCTURE_DISCIPLINES.monitor.includes(h.discipline));
+  }
+  const res = deal({ project: "p", seedDate: "2026-11-09", mode: "operate" });
+  assert.equal(res.mode, "operate");
+  assert.match(res.note, /라벨·버튼/);
+});
+
+test("구조 여럿은 쉼표로, 공통 구성 방식만", () => {
+  const both = STRUCTURE_DISCIPLINES["list-detail"].filter((d) => STRUCTURE_DISCIPLINES.workbench.includes(d));
+  for (let r = 0; r < 20; r++) for (const h of deal({ project: "c", seedDate: "2026-11-09", reroll: r, structure: "list-detail,workbench" }).hands) assert.ok(both.includes(h.discipline), h.discipline);
+  assert.throws(() => deal({ project: "p", seedDate: "2026-11-09", structure: "workbench,nope" }));
+});
+
 test("잘못된 입력", () => {
+  assert.throws(() => deal({ project: "p", seedDate: "2026-11-09", mode: "landing" }));
+  assert.throws(() => deal({ project: "p", seedDate: "2026-11-09", structure: "editor" }));
+  assert.equal(run("dealer.mjs", "--project", "p", "--seed-date", "2026-11-09", "--mode", "x").status, 1);
+  assert.equal(run("dealer.mjs", "--project", "p", "--seed-date", "2026-11-09", "--mode", "operate", "--structure", "workbench").status, 0);
   assert.throws(() => deal({ project: "p", seedDate: "11/09" }));
   assert.throws(() => deal({ project: "p", seedDate: "2026-11-09", pins: { family: "nope" } }));
   assert.throws(() => deal({ project: "p", seedDate: "2026-11-09", candidates: 9 }));

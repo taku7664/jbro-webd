@@ -48,3 +48,36 @@ test("CLI: 지적 있음 2, 없음 0, 없는 파일 1, 스크린샷 저장", { s
     assert.equal(run(fx("render-good.html"), "--widths", "abc").status, 1);
   } finally { rmSync(out, { recursive: true, force: true }); }
 });
+
+test("앱 틀 넘침: 패널 밖으로 새는 absolute 라벨을 잡는다", { skip, timeout: 120000 }, async () => {
+  const { runs } = await renderCheck(fx("render-shell-bad.html"), { widths: [1280], schemes: ["light", "dark"] });
+  for (const r of runs) {
+    const f = r.findings.find((x) => x.rule === "shell-overflow");
+    assert.ok(f, `shell-overflow 안 걸림 (${r.scheme})`);
+    assert.match(f.detail, /label\.visually-hidden/);
+    // body 밖으로 밀려난 글자의 바탕은 흰색이 아니라 body 배경이 번진 캔버스
+    assert.ok(!r.findings.some((x) => x.rule === "contrast"), `캔버스 색 오판 (${r.scheme})`);
+  }
+});
+
+test("앱 틀 좋은 예: 넘침 없음, 다크 대비는 body 배경 기준, 넓은 화면 32px 버튼 통과, 나가기 경고 감지", { skip, timeout: 180000 }, async () => {
+  const { runs, dialogs } = await renderCheck(fx("render-shell-good.html"), { widths: [375, 1280], schemes: ["light", "dark"] });
+  for (const r of runs) {
+    assert.deepEqual(r.findings.filter((f) => f.severity !== "advisory").map((f) => `${f.rule}:${f.target}:${f.detail}`), [], `${r.width} ${r.scheme}`);
+    if (r.width >= 768) assert.ok(!r.findings.some((f) => f.rule === "tap-target"), "넓은 화면은 24px 기준");
+    assert.ok(!r.findings.some((f) => f.rule === "tap-target" && /checkbox|input(?!#)/.test(f.target) && !/btn/.test(f.target)), "라벨이 44px인 체크박스는 통과");
+  }
+  assert.ok(dialogs.includes("beforeunload"), "beforeunload 대화상자를 수락하고 기록");
+});
+
+test("--height와 첫 화면 스크린샷", { skip, timeout: 120000 }, () => {
+  const out = mkdtempSync(join(tmpdir(), "webd-first-"));
+  try {
+    const r = spawnSync(process.execPath, [cli, fx("render-shell-good.html"), "--widths", "1280", "--height", "800", "--out", out, "--json"], { encoding: "utf8", timeout: 120000 });
+    assert.equal(r.status, 0);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.runs[0].height, 800);
+    assert.ok(existsSync(join(out, "1280-light-first.png")) && statSync(join(out, "1280-light-first.png")).size > 1000);
+    assert.equal(spawnSync(process.execPath, [cli, fx("render-shell-good.html"), "--height", "10"], { encoding: "utf8" }).status, 1);
+  } finally { rmSync(out, { recursive: true, force: true }); }
+});

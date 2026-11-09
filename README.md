@@ -35,6 +35,7 @@ skills/webd/
   reference/
     context.md         맥락 잡기, PRODUCT.md 작성
     modes.md           화면 모드 4개 (Persuade·Operate·Read·Experience 깊이)
+    structure.md       화면 구조 판단: 일곱 질문 → 꼭 넣을 것, 작업대형 골격, 페이지형 쏠림 점검
     direction.md       방향 정하기 경로 A–D, DESIGN.md 잠금
     archetypes.md      아키타입 12, 미학 계열 12, 리믹스 규칙, register 다이얼, 시그니처
     industries.md      업종 22개의 지킬 것·흔한 기본값·위험
@@ -47,13 +48,15 @@ skills/webd/
     ops/               작업 명령: critique, audit, polish, harden, onboard, optimize, shape,
                        refine(typeset·layout·colorize·animate·clarify·adapt),
                        intensity(bolder·quieter·distill·delight·overdrive), system(extract·document)
-    surfaces/          화면 유형: landing, pricing, dashboard, forms, docs, portfolio, states
+    surfaces/          구조 질문에 미리 답한 예시: landing, pricing, dashboard, forms, docs, portfolio, states
   scripts/
     detect.mjs         정적 검출기 35규칙
     render-check.mjs   렌더 검사 (설치된 Chrome·Edge 헤드리스, Node 22+)
     check-style.mjs    스타일 사양 대비 계산
     palette.mjs        OKLCH 12단계 팔레트, 대비 자동 보정
     dealer.mjs         방향 후보를 시드로 나눠 주는 딜러
+    image-tokens.mjs   레퍼런스 이미지의 색을 실제 픽셀로 측정 (경로 B)
+    css-inventory.mjs  CSS에 쓰인 값을 세어 토큰 후보·흩어진 값 표시 (경로 D, audit)
   styles/              이름으로 부르는 스타일 20종 + INDEX.md + _template.md
   templates/
     PRODUCT.md
@@ -133,14 +136,18 @@ node skills/webd/scripts/detect.mjs <파일 또는 폴더> [--allow 규칙,규�
 node skills/webd/scripts/render-check.mjs <파일|URL> [--widths 375,1440] [--scheme light,dark] [--out 폴더]
 node skills/webd/scripts/check-style.mjs skills/webd/styles
 node skills/webd/scripts/palette.mjs --seed 150 [--chroma muted|balanced|vivid] [--harmony split]
-node skills/webd/scripts/dealer.mjs --project <이름> --seed-date 2026-11-09 [--pin family=swiss]
+node skills/webd/scripts/dealer.mjs --project <이름> --seed-date 2026-11-09 --mode operate --structure workbench [--pin family=swiss]
+node skills/webd/scripts/image-tokens.mjs <이미지> [--crop x,y,w,h] [--at x,y]
+node skills/webd/scripts/css-inventory.mjs <파일·폴더>
 ```
 
 - **detect**: 소스에서 정규식으로 찾을 수 있는 AI 티·접근성·반응형 35규칙. 0건이 "문제 없음"을 뜻하지 않습니다.
-- **render-check**: 설치된 Chrome·Edge를 헤드리스로 띄워 실제 렌더를 봅니다. 글자 바로 뒤에 깔린 색 기준의 대비(겹친 도형·multiply 포함), SVG 축소까지 계산한 작은 글자, 한글을 실제로 그린 폰트(스택 밖 대체 감지, 버튼 `font: inherit` 누락 등), 지정 폭 기준 가로 넘침, Tab으로 확인한 포커스 표시, 터치 대상, 스크린샷. 이미지 위 글자 대비와 디자인 판단은 보지 않습니다.
+- **render-check**: 설치된 Chrome·Edge를 헤드리스로 띄워 실제 렌더를 봅니다. 글자 바로 뒤에 깔린 색 기준의 대비(겹친 도형·multiply 포함), SVG 축소까지 계산한 작은 글자, 한글을 실제로 그린 폰트(스택 밖 대체 감지, 버튼 `font: inherit` 누락 등), 지정 폭 기준 가로 넘침, 앱 틀인데 문서가 스크롤되는 세로 넘침(패널 밖으로 새는 absolute 요소 지목), Tab으로 확인한 포커스 표시, 터치 대상(좁은 폭 44px·넓은 폭 24px), 나가기 경고(beforeunload) 감지, 스크린샷. 스크롤 패널에 잘려 안 보이는 글자는 대비 검사에서 뺍니다. 이미지 위 글자 대비와 디자인 판단은 보지 않습니다.
 - **check-style**: 스타일 사양의 `contrast` 블록으로 대비 계산.
 - **palette**: 기준 색상 하나로 OKLCH 12단계 라이트·다크 팔레트와 기능 색. 글자 단계 대비를 자동으로 맞춤.
-- **dealer**: 방향 후보마다 계열·빌린 축·구성 방식·색상·시그니처를 시드로 나눠 줌. 사용자 고정 축은 `--pin`, AI 티 조합은 나눠 주지 않음.
+- **image-tokens**: 레퍼런스 스크린샷을 헤드리스 브라우저 캔버스로 읽어 면적 순 색, 바탕·면·글자·포인트 후보, 바탕 대비를 냅니다. `--crop`으로 브라우저 틀·스크롤바를 빼고, `--at x,y`로 특정 픽셀을 읽습니다. 글자 가장자리 서브픽셀 번짐은 포인트 후보에서 뺍니다. 간격·반경은 재지 않습니다.
+- **css-inventory**: HTML `<style>`·`style=""`·CSS 파일에서 색·글자 크기·간격·반경·그림자·굵기·행간·시간 값을 세고, 토큰 밖 색, 4px 격자 밖 간격, 거의 같은 글자 크기를 짚습니다.
+- **dealer**: 방향 후보마다 계열·빌린 축·구성 방식·색상·시그니처를 시드로 나눠 줌. 사용자 고정 축은 `--pin`, AI 티 조합은 나눠 주지 않음. `--mode`·`--structure`를 주면 화면에 안 맞는 패(도구 화면의 포스터 구성 등)를 뺌.
 
 ## 라이브러리
 

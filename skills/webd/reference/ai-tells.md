@@ -36,7 +36,7 @@
 
 ## 타이포
 
-- Inter, Roboto, Open Sans, Geist, Space Grotesk, system-ui를 별 이유 없이 주 폰트로 사용
+- Inter, Roboto, Open Sans, Geist, Space Grotesk, system-ui를 별 이유 없이 주 폰트로 사용 (외부 폰트를 쓸 수 없다는 제약이 있으면 시스템 한글 고딕 스택은 AI 티가 아닙니다. 제약을 `DESIGN.md`에 적고, 개성은 크기·굵기·자간·숫자 표기로 냅니다)
 - "기술 느낌"을 내려고 쓰는 모노스페이스 (코드·데이터·측정값이 아닌 곳)
 - 제목에서 한 단어만 이탤릭·굵게·다른 색으로 강조
 - 라벨을 전부 대문자로

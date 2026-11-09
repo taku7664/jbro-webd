@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>앱 틀 (좋은 예)</title>
+<style>
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #1d1e1f; --line: #c7cbce; --tap: 32px; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #131414; --fg: #eceff1; --line: #46494c; } }
+  @media (max-width: 767px) { :root { --tap: 44px; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  /* html에는 배경이 없고 body 배경이 캔버스로 번진다. 다크에서 대비 계산이 이 색을 써야 한다 */
+  body { font: 16px/1.6 "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; background: var(--bg); color: var(--fg); }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid #247bb5; outline-offset: 2px; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; }
+  .bar { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: center; }
+  .pane { overflow: auto; padding: 16px; min-height: 0; position: relative; }
+  .spacer { height: 1400px; }
+  .ctl { width: 100%; min-height: var(--tap); padding: 0 12px; border: 1px solid #6f757b; border-radius: 4px; background: var(--bg); }
+  .btn { min-height: var(--tap); padding: 0 12px; border: 1px solid #6f757b; border-radius: 4px; background: var(--bg); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar"><strong>예약 도서 도착</strong><button class="btn" type="button">저장</button></div>
+  <div class="pane">
+    <p>패널 안에서만 스크롤되는 긴 입력 영역입니다.</p>
+    <!-- 체크박스는 20px이지만 라벨 줄이 44px이라 라벨을 눌러도 바뀜 → 터치 대상 통과 -->
+    <label style="display:flex;align-items:center;gap:12px;min-height:44px;"><input type="checkbox" style="width:20px;height:20px;margin:0"> 가슴 중앙에 인쇄</label>
+    <div class="spacer"></div>
+    <label class="visually-hidden" for="a">맨 아래 입력</label>
+    <input id="a" class="ctl" value="맨 아래 입력">
+  </div>
+</div>
+<script>
+  // 저장하지 않은 변경이 있는 상태: 다시 불러오면 나가기 경고가 뜬다
+  window.addEventListener("beforeunload", (e) => { e.preventDefault(); e.returnValue = ""; });
+</script>
+</body>
+</html>

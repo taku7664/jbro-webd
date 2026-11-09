@@ -11,11 +11,13 @@
 //   hangul-fallback  지정한 첫 폰트에 한글이 없어 다른 폰트로 대체됨
 //   h-scroll         가로 스크롤 발생
 //   focus-indicator  Tab으로 이동했을 때 outline·box-shadow 표시가 없음
-//   tap-target       버튼·독립 링크·입력이 44×44px보다 작음
+//   shell-overflow   화면 높이 앱 틀인데 문서가 스크롤됨 (패널 밖으로 새는 absolute 요소)
+//   tap-target       버튼·독립 링크·입력이 44×44px(768px 미만) 또는 24×24px(그 이상, WCAG 2.5.8)보다 작음
 //
 // 사용법:
-//   node render-check.mjs <파일|URL> [--widths 375,1440] [--scheme light,dark] [--out <폴더>] [--json]
-// --out을 주면 너비·모드별 전체 페이지 스크린샷(PNG)을 저장한다.
+//   node render-check.mjs <파일|URL> [--widths 375,1440] [--scheme light,dark] [--height 800] [--out <폴더>] [--json]
+// --out을 주면 너비·모드별 전체 페이지 스크린샷(<폭>-<모드>.png)과 첫 화면 스크린샷(<폭>-<모드>-first.png)을 저장한다.
+// --height는 화면 높이(기본: 768 미만 812, 이상 900). 첫 화면 기준을 1280×800처럼 맞출 때 쓴다.
 // 종료 코드: 0 = high·medium 없음 · 2 = 있음 · 1 = 사용 오류·브라우저 실행 실패
 
 import { spawn } from "node:child_process";
@@ -47,7 +49,7 @@ export function findBrowser() {
   return (CANDIDATES[process.platform] || CANDIDATES.linux).find((p) => p && existsSync(p)) || null;
 }
 
-async function launch(exe) {
+export async function launch(exe) {
   const profile = mkdtempSync(join(tmpdir(), "webd-render-"));
   const proc = spawn(exe, [
     "--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`,
@@ -75,7 +77,7 @@ async function launch(exe) {
 
 // ---------- 아주 작은 CDP 클라이언트 ----------
 
-async function connect(port) {
+export async function connect(port) {
   const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   const page = list.find((t) => t.type === "page");
   const ws = new WebSocket(page.webSocketDebuggerUrl);
@@ -83,6 +85,7 @@ async function connect(port) {
   let id = 0;
   const pending = new Map();
   const waiters = [];
+  const listeners = [];
   ws.onmessage = (ev) => {
     const msg = JSON.parse(ev.data);
     if (msg.id && pending.has(msg.id)) {
@@ -90,6 +93,7 @@ async function connect(port) {
       msg.error ? fail(new Error(msg.error.message)) : ok(msg.result);
     } else if (msg.method) {
       for (const w of [...waiters]) if (w.method === msg.method) { waiters.splice(waiters.indexOf(w), 1); w.ok(msg.params); }
+      for (const l of listeners) if (l.method === msg.method) l.fn(msg.params);
     }
   };
   const send = (method, params = {}) => new Promise((ok, fail) => { pending.set(++id, { ok, fail }); ws.send(JSON.stringify({ id, method, params })); });
@@ -103,7 +107,8 @@ async function connect(port) {
     if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text);
     return r.result.value;
   };
-  return { send, once, evaluate, close: () => ws.close() };
+  const on = (method, fn) => listeners.push({ method, fn });
+  return { send, once, evaluate, on, close: () => ws.close() };
 }
 
 // ---------- 페이지 안에서 실행할 검사 ----------
@@ -124,6 +129,17 @@ function pageChecks(opt) {
     return s;
   };
   const visible = (el) => { const cs = getComputedStyle(el); return cs.visibility !== "hidden" && cs.display !== "none" && Number(cs.opacity) > 0.05; };
+  // 아무 배경도 없는 지점의 바탕(캔버스): html 배경, 없으면 body 배경이 캔버스로 번지고(CSS 배경 전파),
+  // 둘 다 없으면 color-scheme이 dark일 때 브라우저 기본 어두운 바탕, 아니면 흰색.
+  const canvasColor = () => {
+    for (const e of [document.documentElement, document.body]) {
+      if (!e) continue;
+      const c = parse(getComputedStyle(e).backgroundColor);
+      if (c && c.a > 0) return over(c, { r: 255, g: 255, b: 255, a: 1 });
+    }
+    return getComputedStyle(document.documentElement).colorScheme.includes("dark") && matchMedia("(prefers-color-scheme: dark)").matches
+      ? { r: 18, g: 18, b: 18, a: 1 } : { r: 255, g: 255, b: 255, a: 1 };
+  };
   const blendOf = (el) => { for (let e = el; e && e !== document.documentElement; e = e.parentElement) { const b = getComputedStyle(e).mixBlendMode; if (b && b !== "normal") return b; } return "normal"; };
 
   // 1. 가로 넘침. 모바일 에뮬레이션에서는 브라우저가 내용 폭에 맞춰 축소해 innerWidth도 늘어나므로, 지정한 폭과 비교한다.
@@ -131,6 +147,26 @@ function pageChecks(opt) {
   const sw = Math.max(document.documentElement.scrollWidth, document.body ? document.body.scrollWidth : 0);
   if (sw > vw + 1) {
     out.push({ rule: "h-scroll", severity: "high", target: "html", detail: `내용 폭 ${sw}px > 화면 ${vw}px` });
+  }
+
+  // 1-2. 화면 높이 틀(앱 셸)인데 문서가 세로로 스크롤됨: 스크롤 패널 밖으로 새는 absolute 요소가 흔한 원인
+  //      (position: relative 조상이 없는 visually-hidden 라벨 등). 패널 안 내용이 문서 전체를 늘린다.
+  const shell = document.body && [...document.body.children].find((e) => {
+    const r = e.getBoundingClientRect();
+    return r.top + scrollY <= 1 && Math.abs(r.height - innerHeight) <= 2 && e.querySelector("*") &&
+      [...e.querySelectorAll("*")].some((c) => /(auto|scroll)/.test(getComputedStyle(c).overflowY));
+  });
+  const sh = document.documentElement.scrollHeight;
+  if (shell && sh > innerHeight + 2) {
+    const shellBottom = shell.getBoundingClientRect().bottom + scrollY;
+    const leak = [...shell.querySelectorAll("*")].filter((e) => {
+      const cs = getComputedStyle(e);
+      if (cs.position !== "absolute") return false;
+      let cb = e.offsetParent;     // absolute의 기준 상자. 없거나 body면 스크롤 패널 밖 기준
+      return (!cb || cb === document.body) && e.getBoundingClientRect().bottom + scrollY > shellBottom + 1;
+    }).slice(0, 3).map(label);
+    out.push({ rule: "shell-overflow", severity: "medium", target: label(shell),
+      detail: `화면 높이 틀인데 문서가 ${sh - innerHeight}px 더 길어 페이지 전체가 스크롤됨${leak.length ? `. 새는 absolute 요소: ${leak.join(", ")} → 스크롤 패널에 position: relative` : ""}` });
   }
 
   // 2·3·4. 글자 단위 검사
@@ -174,6 +210,9 @@ function pageChecks(opt) {
       const x = Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1), y = r.top + r.height / 2;
       if (y < 0 || y > innerHeight - 1) continue;           // 화면 밖 줄은 스크롤 후 다시 본다(아래에서 처리)
       const stack = document.elementsFromPoint(x, y);
+      // 스크롤 패널에 잘려 실제로는 안 보이는 줄: 그 지점에 이 글자의 요소도, html·body가 아닌 조상도 없다
+      const drawn = stack.some((e) => e === el || el.contains(e) || (e.contains(el) && e !== document.documentElement && e !== document.body));
+      if (!drawn) continue;
       let uncertain = false;
       const layers = [];
       for (const e of stack) {
@@ -182,7 +221,7 @@ function pageChecks(opt) {
         const bg = parse(s.backgroundColor);
         if (bg && bg.a > 0) layers.push({ c: bg, blend: s.mixBlendMode });
       }
-      let bg = { r: 255, g: 255, b: 255, a: 1 };
+      let bg = canvasColor();
       for (const l of layers.reverse()) bg = l.blend === "multiply" ? multiply(l.c, bg) : over(l.c, bg);
       const fg = blendOf(el) === "multiply" ? multiply(fg0, bg) : over(fg0, bg);
       const cr = ratio(fg, bg);
@@ -206,7 +245,11 @@ function pageChecks(opt) {
     }
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) continue;
-    if (r.width < 44 || r.height < 44) {
+    // 좁은 화면(터치)은 44px, 넓은 화면(정밀 포인터)은 WCAG 2.5.8 최소 24px
+    const minTap = vw < 768 ? 44 : 24;
+    // 체크박스·라디오는 연결된 <label>을 눌러도 바뀌므로, 라벨 상자가 기준을 넘으면 통과
+    const viaLabel = el.labels && [...el.labels].some((l) => { const lr = l.getBoundingClientRect(); return lr.width >= minTap && lr.height >= minTap; });
+    if ((r.width < minTap || r.height < minTap) && !viaLabel) {
       const k = "tap:" + label(el);
       if (!seen.has(k)) { seen.add(k); out.push({ rule: "tap-target", severity: "advisory", target: label(el), detail: `${Math.round(r.width)}×${Math.round(r.height)}px "${(el.textContent || el.value || "").trim().slice(0, 16)}"` }); }
     }
@@ -271,8 +314,8 @@ async function checkHangul(cdp, targets) {
 
 // ---------- 실행 ----------
 
-async function checkPage(cdp, url, width, scheme, outDir) {
-  const height = width < 768 ? 812 : 900;
+async function checkPage(cdp, url, width, scheme, outDir, fixedHeight = null) {
+  const height = fixedHeight || (width < 768 ? 812 : 900);
   await cdp.send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 768 });
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: scheme }] });
   const loaded = cdp.once("Page.loadEventFired", 30000);
@@ -309,8 +352,13 @@ async function checkPage(cdp, url, width, scheme, outDir) {
     if (!s.visible) findings.push({ rule: "focus-indicator", severity: "high", target: s.tag, detail: `Tab 포커스에 outline·box-shadow가 없음 "${s.text}" (다른 방식으로 표시하면 직접 확인)` });
   }
 
-  let shot = null;
+  let shot = null, firstShot = null;
   if (outDir) {
+    // 첫 화면(스크롤 없이 보이는 범위)만 따로: 저장·주 행동이 첫 화면에 있는지 보는 용도
+    await cdp.evaluate(() => { window.scrollTo(0, 0); if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+    const first = await cdp.send("Page.captureScreenshot", { format: "png" });
+    firstShot = join(outDir, `${width}-${scheme}-first.png`);
+    writeFileSync(firstShot, Buffer.from(first.data, "base64"));
     const metrics = await cdp.send("Page.getLayoutMetrics");
     const h = Math.min(Math.ceil(metrics.cssContentSize?.height || pageHeight), 16000);
     await cdp.send("Emulation.setDeviceMetricsOverride", { width, height: h, deviceScaleFactor: 1, mobile: width < 768 });
@@ -318,10 +366,10 @@ async function checkPage(cdp, url, width, scheme, outDir) {
     shot = join(outDir, `${width}-${scheme}.png`);
     writeFileSync(shot, Buffer.from(data, "base64"));
   }
-  return { width, scheme, findings, textNodes, screenshot: shot };
+  return { width, scheme, height, findings, textNodes, screenshot: shot, firstScreen: firstShot };
 }
 
-export async function renderCheck(target, { widths = [375, 1440], schemes = ["light"], outDir = null } = {}) {
+export async function renderCheck(target, { widths = [375, 1440], schemes = ["light"], outDir = null, height = null } = {}) {
   const exe = findBrowser();
   if (!exe) throw Object.assign(new Error("Chrome·Edge·Chromium을 찾지 못함. WEBD_BROWSER에 실행 파일 경로를 지정하세요."), { code: 1 });
   const url = /^https?:|^file:/.test(target) ? target : pathToFileURL(resolve(target)).href;
@@ -332,10 +380,14 @@ export async function renderCheck(target, { widths = [375, 1440], schemes = ["li
     const cdp = await connect(browser.port);
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
+    // 저장하지 않은 변경이 있는 편집기는 다시 불러올 때 "나가시겠습니까?"(beforeunload)를 띄운다.
+    // 대화상자가 열리면 페이지가 멈추므로 수락하고, 떴다는 사실은 결과에 남긴다(나가기 경고가 있다는 증거).
+    const dialogs = [];
+    cdp.on("Page.javascriptDialogOpening", (p) => { dialogs.push(p.type); cdp.send("Page.handleJavaScriptDialog", { accept: true }).catch(() => {}); });
     const runs = [];
-    for (const scheme of schemes) for (const w of widths) runs.push(await checkPage(cdp, url, w, scheme, outDir));
+    for (const scheme of schemes) for (const w of widths) runs.push(await checkPage(cdp, url, w, scheme, outDir, height));
     cdp.close();
-    return { url, browser: exe, runs };
+    return { url, browser: exe, runs, dialogs };
   } finally { browser.close(); }
 }
 
@@ -349,6 +401,7 @@ function parseArgs(argv) {
     else if (a === "--widths") o.widths = (argv[++i] || "").split(",").map(Number).filter((n) => n >= 200 && n <= 4000);
     else if (a === "--scheme") o.schemes = (argv[++i] || "").split(",").filter((s) => s === "light" || s === "dark");
     else if (a === "--out") o.out = argv[++i];
+    else if (a === "--height") { o.height = Number(argv[++i]); if (!(o.height >= 300 && o.height <= 3000)) throw new Error("--height는 300–3000"); }
     else if (a.startsWith("-")) throw new Error(`알 수 없는 옵션: ${a}`);
     else o.target = a;
   }
@@ -362,7 +415,7 @@ async function main() {
   let o;
   try { o = parseArgs(process.argv.slice(2)); } catch (e) { console.error(e.message); return 1; }
   let result;
-  try { result = await renderCheck(o.target, { widths: o.widths, schemes: o.schemes, outDir: o.out ? resolve(o.out) : null }); }
+  try { result = await renderCheck(o.target, { widths: o.widths, schemes: o.schemes, outDir: o.out ? resolve(o.out) : null, height: o.height || null }); }
   catch (e) { console.error(e.message); return e.code ?? 1; }
   const all = result.runs.flatMap((r) => r.findings);
   const counts = { high: 0, medium: 0, advisory: 0 };
@@ -376,6 +429,7 @@ async function main() {
       const order = { high: 0, medium: 1, advisory: 2 };
       for (const f of [...r.findings].sort((a, b) => order[a.severity] - order[b.severity])) console.log(`  [${f.severity}] ${f.rule}  ${f.target}  ${f.detail}`);
     }
+    if (result.dialogs.length) console.log(`\n대화상자 ${result.dialogs.length}번 자동 수락: ${[...new Set(result.dialogs)].join(", ")} (beforeunload면 나가기 경고가 동작한다는 뜻)`);
     console.log(`\n합계 high ${counts.high}, medium ${counts.medium}, advisory ${counts.advisory}`);
     console.log("보지 않는 것: 디자인 판단(위계, 시그니처, AI 티), 이미지 위 글자의 대비, 애니메이션 도중 상태. 스크린샷을 직접 보세요.");
   }

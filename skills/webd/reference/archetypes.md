@@ -88,7 +88,10 @@
 ```
 node "<스킬 폴더>/scripts/dealer.mjs" --project "<프로젝트>" --seed-date 2026-11-09 --candidates 3
 node "<스킬 폴더>/scripts/dealer.mjs" --project "<프로젝트>" --seed-date 2026-11-09 --pin family=swiss --pin hue=150
+node "<스킬 폴더>/scripts/dealer.mjs" --project "<프로젝트>" --seed-date 2026-11-09 --mode operate --structure workbench
 ```
+
+- **화면 모드와 구조를 넘깁니다**(`--mode`, `--structure`). 넘기지 않으면 12계열·10구성 전체에서 나눠 주므로, 편집기 같은 도구 화면에 "포스터 덩어리"나 "연출 있는 등장"이 나올 수 있습니다.
 
 - 딜러가 후보마다 바탕 계열, 빌릴 축과 그 출처 계열, 구성 방식, 기준 색상, 시그니처 종류를 나눠 줍니다. 모델은 **다시 고르지 않고** 받은 패를 주제에 맞게 정당화하고 구체화합니다.
 - 사용자가 고정한 축(`--pin`)은 모든 후보에 그대로 들어갑니다.

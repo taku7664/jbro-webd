@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>앱 틀 넘침 (나쁜 예)</title>
+<style>
+  :root { color-scheme: light dark; --bg: #ffffff; --fg: #1d1e1f; --line: #c7cbce; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #131414; --fg: #eceff1; --line: #46494c; } }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font: 16px/1.6 "Malgun Gothic", "Apple SD Gothic Neo", sans-serif; background: var(--bg); color: var(--fg); }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid #247bb5; outline-offset: 2px; }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .app { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; }
+  .bar { padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  /* 일부러 position: relative를 빠뜨림 → 아래쪽 visually-hidden 라벨이 문서를 늘린다 */
+  .pane { overflow: auto; padding: 16px; min-height: 0; }
+  .spacer { height: 1400px; }
+  .ctl { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid #6f757b; border-radius: 4px; background: var(--bg); }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar"><strong>예약 도서 도착</strong></div>
+  <div class="pane">
+    <p>패널 안에서만 스크롤되어야 하는 긴 입력 영역입니다.</p>
+    <div class="spacer"></div>
+    <p>패널 아래쪽 글. 패널에 잘려 있어 대비 검사 대상이 아닙니다.</p>
+    <label class="visually-hidden" for="a">맨 아래 입력</label>
+    <input id="a" class="ctl" value="맨 아래 입력">
+  </div>
+</div>
+</body>
+</html>
