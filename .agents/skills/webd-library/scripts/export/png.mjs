@@ -76,16 +76,18 @@ function chunk(type, body) {
   return out;
 }
 
-export function encodePng(img) {
+export function encodePng(img, { fast = false } = {}) {
   const { width: w, height: h, data } = img;
   const stride = w * 4;
   const raw = Buffer.alloc((stride + 1) * h);
   const cand = Array.from({ length: 5 }, () => new Uint8Array(stride));
+  // fast: 미리보기용. 줄마다 필터 다섯 개를 다 시험하지 않고 Paeth 하나, 압축 단계도 낮춤(픽셀은 같고 파일만 조금 큼)
+  const filters = fast ? [4] : [0, 1, 2, 3, 4];
   for (let y = 0; y < h; y++) {
     const cur = data.subarray(y * stride, (y + 1) * stride);
     const prev = y ? data.subarray((y - 1) * stride, y * stride) : new Uint8Array(stride);
     let best = 0, bestSum = Infinity;
-    for (let f = 0; f < 5; f++) {
+    for (const f of filters) {
       const out = cand[f]; let sum = 0;
       for (let i = 0; i < stride; i++) {
         const a = i >= 4 ? cur[i - 4] : 0, b = prev[i], c = i >= 4 ? prev[i - 4] : 0;
@@ -99,5 +101,5 @@ export function encodePng(img) {
   }
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 6;
-  return Buffer.concat([SIG, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw, { level: 9 })), chunk("IEND", Buffer.alloc(0))]);
+  return Buffer.concat([SIG, chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw, { level: fast ? 1 : 9 })), chunk("IEND", Buffer.alloc(0))]);
 }

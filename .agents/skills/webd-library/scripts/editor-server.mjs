@@ -9,6 +9,8 @@
 //
 // 안전:
 //   - 127.0.0.1에만 바인딩하고, Host 머리글이 127.0.0.1:<포트> 또는 localhost:<포트>가 아니면 거절(DNS 리바인딩 차단).
+//     lan: true(library.mjs open --lan)일 때만 모든 주소(0.0.0.0)에 열고, 이 PC의 사설 IPv4 주소(192.168.x 등):<포트>도 Host로 받는다.
+//     같은 와이파이의 다른 기기가 접속할 수 있게 되므로 토큰을 아는 사람만 들어온다. 공용 와이파이에서는 쓰지 않는다.
 //   - 실행마다 새로 만드는 토큰이 있어야 한다. 주소의 ?t= 로 처음 열면 같은 토큰을 HttpOnly·SameSite=Strict 쿠키로 남겨
 //     목록 → 편집기 이동에 토큰을 다시 붙이지 않는다. API는 x-webd-token 머리글이나 쿠키로 확인한다.
 //   - POST는 Origin이 있으면 같은 서버여야 한다.
@@ -36,7 +38,7 @@
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, watch, statSync } from "node:fs";
 import { join, dirname, normalize, extname, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { tmpdir, networkInterfaces } from "node:os";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -66,11 +68,23 @@ export function startEditor({ lib, id, port = 0, token, capturer }) {
 }
 
 /** 라이브러리 전체 서버. 반환: Promise<{ url(목록), editUrl(id), port, token, close() }> */
-export function startLibrary({ lib, port = 0, token, capturer }) {
-  return startServer({ lib, only: null, port, token, capturer });
+export function startLibrary({ lib, port = 0, token, capturer, lan = false, listenHost }) {
+  return startServer({ lib, only: null, port, token, capturer, lan, listenHost });
 }
 
-function startServer({ lib, only, port, token = randomBytes(16).toString("hex"), capturer: injected }) {
+/** 이 PC의 사설 IPv4 주소들(같은 와이파이에서 폰이 접속할 주소) */
+export function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(networkInterfaces())) for (const a of list ?? []) {
+    if (a.family !== "IPv4" || a.internal) continue;
+    if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(a.address)) out.push(a.address);
+  }
+  return out;
+}
+
+function startServer({ lib, only, port, token = randomBytes(16).toString("hex"), capturer: injected, lan = false, listenHost }) {
+  const lanIps = lan ? lanAddresses() : [];
+  const host = listenHost ?? (lan ? "0.0.0.0" : "127.0.0.1");   // listenHost는 시험용(127.0.0.1에 묶은 채 lan 동작 확인)
   const exists = (id) => typeof id === "string" && id && !id.startsWith(".") && !/[\\/]/.test(id) && existsSync(join(lib, id, "meta.json")) && existsSync(join(lib, id, "component.html"));
   const allowed = (id) => (only ? id === only : true) && exists(id);
   const watchers = new Map();   // id → { clients:Set, lastHash, watcher, timer }
@@ -103,7 +117,7 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
 
   const server = createServer(async (req, res) => {
     const addr = server.address();
-    const okHosts = [`127.0.0.1:${addr.port}`, `localhost:${addr.port}`];
+    const okHosts = [`127.0.0.1:${addr.port}`, `localhost:${addr.port}`, ...lanIps.map((ip) => `${ip}:${addr.port}`)];
     if (!okHosts.includes(req.headers.host)) return send(res, 403, "잘못된 Host");
     const url = new URL(req.url, `http://${req.headers.host}`);
     const parts = url.pathname.split("/").filter(Boolean).map((p) => { try { return decodeURIComponent(p); } catch { return "\0"; } });
@@ -138,6 +152,9 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
         return;
       }
       if (req.method === "GET" && parts[0] === "lib" && parts.length >= 3) {
+        // 같은 와이파이로 연 경우, 이 PC 밖에서 온 요청은 컴포넌트 파일도 토큰(쿠키)이 있어야 준다(내보내기용 브라우저는 127.0.0.1)
+        const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress);
+        if (lan && !local && !authed()) return send(res, 403, "토큰이 없거나 다릅니다.");
         const id = parts[1];
         if (!allowed(id)) return send(res, 404, "없음");
         const rest = parts.slice(2);
@@ -190,7 +207,7 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
           const { writeExport } = await import("./export/run.mjs");
           const cap = await getCapturer();
           const run = await A.buildAtlas({
-            capture: cap.capture, atlas, scales: preview ? [atlas.scales[atlas.scales.length - 1]] : atlas.scales,
+            capture: cap.capture, atlas, scales: preview ? [atlas.scales[atlas.scales.length - 1]] : atlas.scales, fastPng: preview,
             member: (mid) => ({ url: `http://127.0.0.1:${addr.port}/lib/${encodeURIComponent(mid)}/component.html`, spec: A.memberSpec(lib, mid), meta: JSON.parse(readFileSync(join(lib, mid, "meta.json"), "utf8")) }),
           });
           const warnings = [...aw, ...run.warnings];
@@ -287,7 +304,7 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
             const run = await buildExport({
               capture: cap.capture, url: docUrl, viewport: meta.viewport, warnings,
               spec: preview ? { ...spec, scales: [spec.scales[spec.scales.length - 1]] } : spec,
-              source: { id, name: meta.name, version: meta.versions },
+              source: { id, name: meta.name, version: meta.versions }, fastPng: preview,
             });
             const { encodePng } = await import("./export/png.mjs");
             const pngData = (name) => "data:image/png;base64," + run.files.find((f) => f.name === name).bytes.toString("base64");
@@ -295,7 +312,7 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
             // 애니메이션이면 프레임 그림을 모두 보내 편집기에서 재생해 본다
             const previews = run.previews.map((p) => ({ ...p, url: pngData(p.png), frames: (p.frames || []).map((f) => ({
               key: f.key, label: f.label, fps: f.fps, size: { w: f.images[0].width, h: f.images[0].height },
-              urls: f.images.map((im) => "data:image/png;base64," + encodePng(im).toString("base64")),
+              urls: f.images.map((im) => "data:image/png;base64," + encodePng(im, { fast: true }).toString("base64")),
             })) }));
             if (preview) return json(res, 200, { preview: true, previews, warnings: run.warnings, files: run.files.map(fileInfo) });
             const out = outputDir(spec, lib, id);
@@ -322,11 +339,11 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
 
   return new Promise((resolve, reject) => {
     server.once("error", (e) => { closeWatchers(); clearInterval(ping); reject(e); });
-    server.listen(port, "127.0.0.1", () => {
+    server.listen(port, host, () => {
       const p = server.address().port;
       const base = `http://127.0.0.1:${p}`;
       resolve({
-        port: p, token,
+        port: p, token, lanHosts: lanIps.map((ip) => `${ip}:${p}`),
         url: only ? `${base}/edit/${encodeURIComponent(only)}?t=${token}` : `${base}/lib/?t=${token}`,
         editUrl: (id) => `${base}/edit/${encodeURIComponent(id)}?t=${token}`,
         close: () => new Promise((r) => {

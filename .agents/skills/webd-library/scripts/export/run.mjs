@@ -17,7 +17,7 @@ import { expandFrames, scaleSuffix } from "./spec.mjs";
  * @param {string[]} [o.warnings]                 사양 정규화 경고
  * @returns {Promise<{ files: { name, bytes: Buffer, kind: "png"|"json", scale, size? }[], previews: object[], warnings: string[] }>}
  */
-export async function buildExport({ capture, url, spec, viewport, source, warnings: specWarnings = [] }) {
+export async function buildExport({ capture, url, spec, viewport, source, warnings: specWarnings = [], fastPng = false }) {
   const all = expandFrames(spec);   // 상태 목록(기본 + 켠 상태). 애니메이션 프레임은 상태마다 페이지에서 길이를 재서 정한다
   const warnings = new Set(specWarnings);
   const files = [], previews = [];
@@ -53,7 +53,7 @@ export async function buildExport({ capture, url, spec, viewport, source, warnin
         size: { w: packed.image.width, h: packed.image.height }, scale, spec, insets: list[0].shot.insets,
         source: { ...base, box: list[0].shot.box }, warnings: [...warnings], animation: animInfo(list),
       });
-      files.push({ name: png, kind: "png", scale, size: { w: packed.image.width, h: packed.image.height }, bytes: encodePng(packed.image) });
+      files.push({ name: png, kind: "png", scale, size: { w: packed.image.width, h: packed.image.height }, bytes: encodePng(packed.image, { fast: fastPng }) });
       files.push({ name: png.replace(/\.png$/, ".json"), kind: "json", scale, bytes: Buffer.from(JSON.stringify(data, null, 2) + "\n") });
       previews.push({ scale, png, insets: list[0].shot.insets, size: { w: packed.image.width, h: packed.image.height }, box: list[0].shot.box, cssBox: list[0].shot.cssBox, frames: previewStates(list) });
     };
@@ -69,11 +69,13 @@ export async function buildExport({ capture, url, spec, viewport, source, warnin
  * 칸 크기를 맞춘 뒤(alignStates) [{ state, label, tokens, shot }]를 돌려준다. 묶음 시트(atlas.mjs)도 이 함수를 쓴다.
  */
 export async function captureStates({ capture, url, spec, viewport, scale, states, animate, warnings }) {
+  // 상태들을 한꺼번에 맡긴다(캡처기가 탭 여러 개로 동시에 찍음). 결과 처리는 원래 순서대로
+  const results = await Promise.all(states.map((st) =>
+    capture({ url, spec, scale, viewport, state: st.tokens.length ? st.tokens : null, animate }).then((shot) => ({ shot }), (error) => ({ error }))));
   const shots = [];
-  for (const st of states) {
-    let shot;
-    try { shot = await capture({ url, spec, scale, viewport, state: st.tokens.length ? st.tokens : null, animate }); }
-    catch (e) {
+  for (const [i, st] of states.entries()) {
+    const { shot, error: e } = results[i];
+    if (e) {
       if (st.state === "normal" || !e.status || e.status >= 500) throw e;   // 기본 상태 실패·브라우저 문제는 전체 실패
       warnings.add(`"${st.label}" 상태는 찍지 못해 뺐습니다: ${e.message}`);
       continue;

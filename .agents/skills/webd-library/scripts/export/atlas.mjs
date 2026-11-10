@@ -90,7 +90,7 @@ export function memberSpec(lib, id) {
  * @param {(id) => { url, spec, meta }} o.member   컴포넌트 렌더 주소·설정·메타
  * @param {number[]} [o.scales]            미리보기면 배율 하나만
  */
-export async function buildAtlas({ capture, atlas, member, scales = atlas.scales }) {
+export async function buildAtlas({ capture, atlas, member, scales = atlas.scales, fastPng = false }) {
   if (!atlas.members.length) { const e = new Error("묶음에 컴포넌트가 없습니다."); e.status = 400; throw e; }
   const warnings = new Set();
   const members = atlas.members.map((id) => ({ id, ...member(id) }));
@@ -101,12 +101,17 @@ export async function buildAtlas({ capture, atlas, member, scales = atlas.scales
   const files = [], previews = [];
   for (const scale of scales) {
     const cells = [], infos = [];
-    for (const m of members) {
+    // 컴포넌트들을 한꺼번에 맡기고(캡처기가 탭 여러 개로 나눠 찍음) 결과는 묶음 순서대로 쓴다
+    const shotsOf = await Promise.all(members.map(async (m) => {
       const spec = { ...m.spec, scales: [scale] };
       const animate = spec.animation?.enabled ? spec.animation : null;
-      const frameMs = animate ? Math.round(1000 / animate.fps) : 100;
       const w = new Set();
       const shots = await captureStates({ capture, url: m.url, spec, viewport: m.meta.viewport, scale, states: keptStates.get(m.id) ?? expandFrames(spec), animate, warnings: w });
+      return { spec, animate, w, shots };
+    }));
+    for (const [mi, m] of members.entries()) {
+      const { spec, animate, w, shots } = shotsOf[mi];
+      const frameMs = animate ? Math.round(1000 / animate.fps) : 100;
       if (!keptStates.has(m.id)) keptStates.set(m.id, shots.map(({ shot, ...st }) => st));
       for (const x of w) warnings.add(`${m.meta.name}: ${x}`);
       const insets = shots[0].shot.insets;
@@ -126,7 +131,7 @@ export async function buildAtlas({ capture, atlas, member, scales = atlas.scales
       const stem = `${atlas.name}${pages.length > 1 ? `-${n + 1}` : ""}`;
       const png = `${stem}${scaleSuffix(scale)}.png`;
       const data = atlasData({ atlas, page: pg, pageIndex: n, pageCount: pages.length, png, scale, infos, warnings: [...warnings] });
-      files.push({ name: png, kind: "png", scale, size: { w: pg.image.width, h: pg.image.height }, bytes: encodePng(pg.image) });
+      files.push({ name: png, kind: "png", scale, size: { w: pg.image.width, h: pg.image.height }, bytes: encodePng(pg.image, { fast: fastPng }) });
       files.push({ name: png.replace(/\.png$/, ".json"), kind: "json", scale, bytes: Buffer.from(JSON.stringify(data, null, 2) + "\n") });
       previews.push({ scale, png, page: n, size: { w: pg.image.width, h: pg.image.height }, frames: pg.cells.length, members: [...new Set(pg.cells.map((c) => c.member))] });
     });

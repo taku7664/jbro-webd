@@ -425,3 +425,26 @@ test("내보내기: 실제 브라우저로 투명 PNG·9-slice JSON을 만든다
     assert.equal(bad.status, 409);
   } finally { await srv.close(); }
 });
+
+test("라이브러리 서버 lan: 사설 IP Host를 받고, 토큰 없는 요청은 여전히 거절(127.0.0.1에 묶어 시험)", async () => {
+  const { lanAddresses } = await import("../skills/webd-library/scripts/editor-server.mjs");
+  const ips = lanAddresses();
+  for (const ip of ips) assert.match(ip, /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/, "사설 IPv4만");
+  const { lib } = makeLib();
+  const tok = "l".repeat(32);
+  const off = await startLibrary({ lib, token: tok });
+  const on = await startLibrary({ lib, token: tok, lan: true, listenHost: "127.0.0.1" });
+  try {
+    const fake = ips[0] ?? "192.168.0.99";
+    const viaLan = (srv, path, headers = {}) => new Promise((resolve, reject) => {
+      const r = request({ host: "127.0.0.1", port: srv.port, method: "GET", path, headers: { host: `${fake}:${srv.port}`, ...headers } }, (res) => { res.resume(); resolve(res.statusCode); });
+      r.on("error", reject); r.end();
+    });
+    assert.equal(await viaLan(off, `/lib/?t=${tok}`), 403, "lan을 안 켜면 사설 IP Host는 거절");
+    if (ips.length) {
+      assert.equal(await viaLan(on, `/lib/?t=${tok}`), 200, "lan이면 사설 IP Host로 목록");
+      assert.equal(await viaLan(on, "/lib/"), 403, "토큰 없으면 거절");
+      assert.deepEqual(on.lanHosts, ips.map((ip) => `${ip}:${on.port}`));
+    }
+  } finally { await off.close(); await on.close(); }
+});

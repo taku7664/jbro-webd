@@ -112,10 +112,32 @@ export async function launch(exe) {
 
 // ---------- 아주 작은 CDP 클라이언트 ----------
 
-export async function connect(port) {
-  const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-  const page = list.find((t) => t.type === "page");
-  const ws = new WebSocket(page.webSocketDebuggerUrl);
+/**
+ * 새 창을 연다(탭이 아니라 창: 같은 창의 뒤쪽 탭은 화면에 안 보여 requestAnimationFrame이 멈춤).
+ * 반환: 그 창의 웹소켓 주소(connect의 wsUrl로)
+ */
+export async function newPage(port) {
+  const { webSocketDebuggerUrl: browserWs } = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
+  const ws = new WebSocket(browserWs);
+  await new Promise((ok, fail) => { ws.onopen = ok; ws.onerror = () => fail(new Error("CDP 연결 실패")); });
+  try {
+    const targetId = await new Promise((ok, fail) => {
+      const t = setTimeout(() => fail(new Error("새 창을 열지 못함(시간 초과)")), 10000);
+      ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id === 1) { clearTimeout(t); m.error ? fail(new Error(m.error.message)) : ok(m.result.targetId); } };
+      ws.send(JSON.stringify({ id: 1, method: "Target.createTarget", params: { url: "about:blank", newWindow: true } }));
+    });
+    return `ws://127.0.0.1:${port}/devtools/page/${targetId}`;
+  } finally { ws.close(); }
+}
+
+/** 탭 하나에 CDP로 붙는다. wsUrl을 주면 그 탭(newPage로 연 탭 등), 없으면 첫 탭 */
+export async function connect(port, { wsUrl } = {}) {
+  let url = wsUrl;
+  if (!url) {
+    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+    url = list.find((t) => t.type === "page").webSocketDebuggerUrl;
+  }
+  const ws = new WebSocket(url);
   await new Promise((ok, fail) => { ws.onopen = ok; ws.onerror = () => fail(new Error("CDP 연결 실패")); });
   let id = 0;
   const pending = new Map();
@@ -144,6 +166,8 @@ export async function connect(port) {
     return r.result.value;
   };
   const on = (method, fn) => listeners.push({ method, fn });
+  // 탭이나 브라우저가 죽어 연결이 끊기면 기다리던 요청을 모두 실패로 끝낸다(영원히 기다리지 않게)
+  ws.onclose = () => { for (const { fail } of pending.values()) fail(new Error("CDP 연결이 끊김")); pending.clear(); };
   return { send, once, evaluate, on, close: () => ws.close() };
 }
 

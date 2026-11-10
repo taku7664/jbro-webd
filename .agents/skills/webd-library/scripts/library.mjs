@@ -17,8 +17,10 @@
 //   remove <id>
 //   index
 //   path
-//   open   [--port <번호>] [--no-open]        라이브러리 서버를 열고 목록을 띄움. 카드를 누르면 편집기, 편집기에서 내보내기 (Ctrl+C로 닫음)
-//   edit   <id> [--port <번호>] [--no-open]   같은 서버를 열고 그 항목의 편집기를 바로 띄움
+//   open   [--port <번호>] [--no-open] [--no-watch] [--lan]   라이브러리 서버를 열고 목록을 띄움. 카드를 누르면 편집기, 편집기에서 내보내기 (Ctrl+C로 닫음)
+//   edit   <id> [--port <번호>] [--no-open] [--no-watch] [--lan]   같은 서버를 열고 그 항목의 편집기를 바로 띄움
+//          스킬 코드(scripts/·editor/)가 바뀌면 서버를 같은 포트·토큰으로 다시 띄운다(열린 탭은 새로 고침만). --no-watch로 끔.
+//          --lan: 같은 와이파이의 폰·태블릿에서 열 수 있게 사설 IP로도 연다(토큰을 아는 사람만 접속). 공용 와이파이에서는 쓰지 않는다.
 //   atlas  <이름> [--members id,id] [--max 512|1024|2048|4096] [--pot] [--padding n] [--extrude n] [--no-trim] [--scales 1,2]
 //          묶음 시트: 컴포넌트 여러 개를 각자의 export.json대로 찍어 한 장(넘치면 여러 장)에 빽빽하게 모아 쓴다.
 //          --members 등을 주면 묶음 정의(<라이브러리>/.atlases/<이름>.json)를 고친 뒤 내보낸다. atlas --list는 목록.
@@ -29,7 +31,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, rename
 import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
+import { spawn, fork } from "node:child_process";
+import { watch } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { renderGallery } from "./gallery.mjs";
 
 export const CATEGORIES = ["hero", "nav", "button", "form", "table", "chart", "card", "list", "section", "footer", "feedback", "other"];
@@ -346,6 +350,8 @@ function parseArgs(argv) {
     else if (a === "--pot") o.pot = true;
     else if (a === "--no-trim") o.trim = false;
     else if (a === "--list") o.list = true;
+    else if (a === "--no-watch") o.noWatch = true;
+    else if (a === "--lan") o.lan = true;
     else if (a.startsWith("--")) {
       const [k, v] = a.includes("=") ? [a.slice(2, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a.slice(2), rest[++i]];
       if (v === undefined) throw usage(`${a}에 값이 없습니다.`);
@@ -366,6 +372,70 @@ function openBrowser(url) {
   const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
     : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
   try { spawn(cmd, args, { stdio: "ignore", detached: true, windowsVerbatimArguments: false }).unref(); } catch {}
+}
+
+/**
+ * 라이브러리 서버를 자식 프로세스(serve.mjs)로 띄운다. watch면 스킬 코드가 바뀔 때 같은 포트·토큰으로 다시 띄운다.
+ * 토큰은 환경변수로만 넘긴다(명령줄에 남지 않게).
+ */
+function serveLibrary(lib, { port, id, open, watch: watching, lan }) {
+  const here = fileURLToPath(new URL(".", import.meta.url));
+  const token = randomBytes(16).toString("hex");
+  let child = null, fixedPort = port, first = true, restarting = false, timer = null, quitting = false;
+  const urls = (p) => {
+    const q = `?t=${token}`;
+    const list = { lib: `http://127.0.0.1:${p}/lib/${q}`, edit: id ? `http://127.0.0.1:${p}/edit/${encodeURIComponent(id)}${q}` : null };
+    return list;
+  };
+  const start = (attempt = 0) => {
+    child = fork(join(here, "serve.mjs"), [], { env: { ...process.env, WEBD_SERVE_LIB: lib, WEBD_SERVE_PORT: String(fixedPort), WEBD_SERVE_TOKEN: token, WEBD_SERVE_LAN: lan ? "1" : "0" }, stdio: ["ignore", "inherit", "inherit", "ipc"] });
+    child.on("message", (m) => {
+      if (m?.error) {
+        if (/EADDRINUSE/.test(m.error) && attempt < 10 && !first) { setTimeout(() => start(attempt + 1), 300); return; }   // 앞 서버가 포트를 아직 놓지 않음
+        console.error(`서버를 열지 못함: ${m.error}`); process.exit(m.code === 3 ? 3 : 1);
+      }
+      if (!m?.ready) return;
+      fixedPort = m.port;
+      if (first) {
+        first = false;
+        const u = urls(m.port);
+        console.log(`라이브러리 서버: ${u.lib}`);
+        if (u.edit) console.log(`편집기: ${u.edit}`);
+        for (const h of m.lanHosts) console.log(`같은 와이파이(폰·태블릿): http://${h}/lib/?t=${token}`);
+        if (lan && !m.lanHosts.length) console.log("같은 와이파이 주소를 찾지 못했습니다(사설 IPv4 주소 없음).");
+        console.log(`  목록에서 카드를 누르면 편집기가 열립니다. 저장하면 새 버전이 되고 이전 파일은 history/에 남습니다.${watching ? " 스킬 코드가 바뀌면 서버를 다시 띄웁니다(탭은 새로 고침)." : ""} 닫으려면 Ctrl+C.`);
+        if (open) openBrowser(u.edit ?? u.lib);
+      } else {
+        console.log(`[${new Date().toLocaleTimeString()}] 스킬 코드가 바뀌어 서버를 다시 띄웠습니다(같은 주소). 열린 탭은 새로 고침하세요.`);
+      }
+      restarting = false;
+    });
+    child.on("exit", (code) => {
+      if (quitting) return;
+      if (restarting) return start();
+      if (!first) { console.error(`서버가 멈췄습니다(코드 ${code}). 다시 띄웁니다.`); setTimeout(() => start(), 500); }
+    });
+  };
+  const restart = () => {
+    if (!child || restarting) return;
+    restarting = true;
+    child.send?.("stop");
+    const c = child; setTimeout(() => { if (c.exitCode === null) c.kill(); }, 5000);
+  };
+  if (watching) {
+    const dirs = [here, join(here, "..", "editor"), join(here, "..", "..", "webd", "scripts")];
+    for (const d of dirs) {
+      try {
+        watch(d, { recursive: true }, (_ev, name) => {
+          if (!name || !/\.(mjs|js|css|html)$/.test(name)) return;
+          clearTimeout(timer); timer = setTimeout(restart, 300);
+        });
+      } catch {}
+    }
+  }
+  const quit = () => { quitting = true; if (child && child.exitCode === null) { child.send?.("stop"); child.once("exit", () => { console.log("서버를 닫았습니다."); process.exit(0); }); setTimeout(() => process.exit(0), 5000); } else process.exit(0); };
+  process.on("SIGINT", quit); process.on("SIGTERM", quit);
+  start();
 }
 
 /** 묶음 시트: 서버를 잠깐 열어 같은 경로(POST /atlas/…)로 저장·내보내기를 하고 닫는다. */
@@ -455,15 +525,7 @@ function main() {
         if (cmd === "edit" && (!id || !existsSync(join(lib, id, "meta.json")))) { console.error(`없는 항목: ${id ?? "(id 없음)"}`); return 3; }
         const port = o.port ? Number(o.port) : 0;
         if (!Number.isInteger(port) || port < 0 || port > 65535) throw usage("--port는 0~65535 정수입니다.");
-        import("./editor-server.mjs").then(({ startLibrary }) => startLibrary({ lib, port })).then((srv) => {
-          const target = id ? srv.editUrl(id) : srv.url;
-          console.log(`라이브러리 서버: ${srv.url}`);
-          if (id) console.log(`편집기: ${target}`);
-          console.log("  목록에서 카드를 누르면 편집기가 열립니다. 저장하면 새 버전이 되고 이전 파일은 history/에 남습니다. 닫으려면 Ctrl+C.");
-          if (!o.noOpen) openBrowser(target);
-          const stop = () => srv.close().then(() => { console.log("서버를 닫았습니다."); process.exit(0); });
-          process.on("SIGINT", stop); process.on("SIGTERM", stop);
-        }).catch((e) => { console.error(`서버를 열지 못함: ${e.message}`); process.exit(e.code === 3 ? 3 : 1); });
+        serveLibrary(lib, { port, id, open: !o.noOpen, watch: !o.noWatch, lan: Boolean(o.lan) });
         return 0;
       }
       case "atlas": {

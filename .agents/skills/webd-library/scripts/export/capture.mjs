@@ -6,7 +6,7 @@
 
 import { decodePng } from "./png.mjs";
 import { alphaBounds, crop } from "./pack.mjs";
-import { findBrowser, launch, connect } from "../../../webd/scripts/render-check.mjs";
+import { findBrowser, launch, connect, newPage } from "../../../webd/scripts/render-check.mjs";
 import { applyWebdState, rewriteStateSelectors } from "../../editor/states.mjs";
 import { animInfo, seekAnimations, frameTimes } from "../../editor/anim.mjs";
 
@@ -140,34 +140,59 @@ async function seekPage(t, seek) {
   return true;
 }
 
-export function createCapturer({ browserPath } = {}) {
-  let session = null;   // { browser, cdp }
-  let queue = Promise.resolve();
+/**
+ * 브라우저 하나를 띄워 두고 탭 여러 개(기본 4)로 동시에 찍는다. 상태·컴포넌트마다 캡처를 동시에 맡기면
+ * 비어 있는 탭이 차례로 받아 간다(한 캡처 안의 애니메이션 프레임은 같은 탭에서 차례로).
+ * 환경변수 WEBD_CAPTURE_TABS로 탭 수(1–8)를 바꿀 수 있다.
+ */
+export function createCapturer({ browserPath, tabs = Number(process.env.WEBD_CAPTURE_TABS) || 4 } = {}) {
+  const TABS = Math.min(8, Math.max(1, Math.floor(tabs)));
+  let session = null;        // { browser, free: cdp[], all: cdp[] }
+  let opening = null;
+  const waiting = [];        // 탭을 기다리는 캡처
+  let busy = 0;
 
-  async function open() {
-    if (session) return session;
-    const exe = browserPath ?? findBrowser();
-    if (!exe) throw new CaptureError("내보내기에 쓸 Chrome·Edge를 찾지 못했습니다. 설치하거나 환경변수 WEBD_BROWSER에 실행 파일 경로를 지정하세요.", 503);
-    const browser = await launch(exe);
-    try {
-      const cdp = await connect(browser.port);
-      await cdp.send("Page.enable"); await cdp.send("Runtime.enable");
-      session = { browser, cdp };
-      return session;
-    } catch (e) { await browser.close().catch(() => {}); throw e; }
+  async function openTab(port, first) {
+    const cdp = first ? await connect(port) : await connect(port, { wsUrl: await newPage(port) });
+    await cdp.send("Page.enable"); await cdp.send("Runtime.enable");
+    return cdp;
+  }
+  function open() {
+    if (session) return Promise.resolve(session);
+    return opening ??= (async () => {
+      const exe = browserPath ?? findBrowser();
+      if (!exe) throw new CaptureError("내보내기에 쓸 Chrome·Edge를 찾지 못했습니다. 설치하거나 환경변수 WEBD_BROWSER에 실행 파일 경로를 지정하세요.", 503);
+      const browser = await launch(exe);
+      try {
+        const all = [];
+        for (let i = 0; i < TABS; i++) all.push(await openTab(browser.port, i === 0));
+        session = { browser, all, free: [...all] };
+        return session;
+      } catch (e) { await browser.close().catch(() => {}); throw e; }
+    })().finally(() => { opening = null; });
   }
 
   async function reset() {
     const s = session; session = null;
-    if (s) { try { s.cdp.close(); } catch {} await s.browser.close().catch(() => {}); }
+    if (s) { for (const c of s.all) { try { c.close(); } catch {} } await s.browser.close().catch(() => {}); }
+  }
+
+  async function acquire() {
+    const s = await open();
+    if (s.free.length) return { s, cdp: s.free.pop() };
+    await new Promise((r) => waiting.push(r));
+    return acquire();
+  }
+  function release(s, cdp) {
+    if (session === s) s.free.push(cdp);
+    const next = waiting.shift(); if (next) next();
   }
 
   /**
    * @param {{ url: string, spec: object, scale: number, viewport: { width, height }, state?: object[] }} job  state: 걸 상태 조각(editor/states.mjs)
    * @returns {Promise<{ image, box: {x,y,w,h}, insets: {l,t,r,b}|null, cssBox: {w,h}, label, warnings: string[] }>}
    */
-  async function captureOnce({ url, spec, scale, viewport, state = null, animate = null }) {
-    const { cdp } = await open();
+  async function captureOnce({ url, spec, scale, viewport, state = null, animate = null }, cdp) {
     const vw = Math.max(16, Math.round(viewport?.width || 1200)), vh = Math.max(16, Math.round(viewport?.height || 720));
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: vh, deviceScaleFactor: scale, mobile: false });
     if (spec.background === "transparent") await cdp.send("Emulation.setDefaultBackgroundColorOverride", { color: { r: 0, g: 0, b: 0, a: 0 } });
@@ -214,7 +239,8 @@ export function createCapturer({ browserPath } = {}) {
     const raws = [];
     for (const time of times) {
       if (times.length > 1) await cdp.evaluate(seekPage, time, seekAnimations);
-      const shot = await cdp.send("Page.captureScreenshot", { format: "png", clip: { ...clip, scale: 1 }, captureBeyondViewport: true, fromSurface: true });
+      // optimizeForSpeed: 브라우저 안 PNG 압축만 가볍게(무손실이라 픽셀은 같음)
+      const shot = await cdp.send("Page.captureScreenshot", { format: "png", optimizeForSpeed: true, clip: { ...clip, scale: 1 }, captureBeyondViewport: true, fromSurface: true });
       raws.push(decodePng(Buffer.from(shot.data, "base64")));
     }
     let images = raws;
@@ -255,19 +281,30 @@ export function createCapturer({ browserPath } = {}) {
     return { image, frames: images.map((im, i) => ({ image: im, time: times[i] })), box: bx, insets, cssBox: { w: box.w, h: box.h }, label: prep.label, warnings, anim: prep.anim };
   }
 
-  function capture(job) {
-    const run = queue.then(async () => {
-      try { return await captureOnce(job); }
-      catch (e) {
-        if (e instanceof CaptureError) throw e;
-        await reset();                       // 브라우저가 죽었거나 연결이 끊김: 한 번만 다시 띄워 시도
-        try { return await captureOnce(job); }
-        catch (e2) { if (!(e2 instanceof CaptureError)) await reset(); throw e2 instanceof CaptureError ? e2 : new CaptureError(`캡처 실패: ${e2.message}`); }
-      }
-    });
-    queue = run.catch(() => {});
-    return run;
+  async function attempt(job) {
+    const { s, cdp } = await acquire();
+    busy++;
+    try { return await captureOnce(job, cdp); }
+    catch (e) {
+      // 탭·브라우저가 죽었으면 브라우저째 다시 띄운다(다른 탭에서 돌던 캡처도 실패해 각자 한 번 다시 시도한다)
+      if (!(e instanceof CaptureError) && session === s) await reset();
+      throw e;
+    } finally { busy--; release(s, cdp); }
   }
 
-  return { capture, close: () => { const q = queue; queue = Promise.resolve(); return q.then(reset, reset); } };
+  async function capture(job) {
+    try { return await attempt(job); }
+    catch (e) {
+      if (e instanceof CaptureError) throw e;
+      try { return await attempt(job); }        // 한 번만 다시 시도
+      catch (e2) { throw e2 instanceof CaptureError ? e2 : new CaptureError(`캡처 실패: ${e2.message}`); }
+    }
+  }
+
+  async function close() {
+    while (busy || opening) await new Promise((r) => setTimeout(r, 20));
+    await reset();
+  }
+
+  return { capture, close, tabs: TABS };
 }
