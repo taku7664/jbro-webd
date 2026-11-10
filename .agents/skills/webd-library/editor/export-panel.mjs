@@ -133,7 +133,7 @@ export function initExport(ctx) {
       row("가운데", seg("fill", [["stretch", "늘림"], ["tile", "반복"]], spec.slice.fill, (v) => { spec.slice.fill = v; changed(); }), null, "늘림: 가운데를 늘림\n반복: 가운데 무늬를 반복(tile)"),
       row("크기", seg("size", [["compact", "최소"], ["original", "원래"]], spec.slice.size, (v) => { spec.slice.size = v; changed(); }),
         null, "최소: 인셋 + 가운데 4px 크기로 다시 렌더해 작게\n원래: 화면에 보이는 크기 그대로"),
-      row("내용", check("틀만 찍기", spec.slice.frameOnly, (on) => { spec.slice.frameOnly = on; changed(); }), null, "글자·아이콘을 숨기고 틀만 찍습니다(엔진에서 글자를 따로 그릴 때)."),
+      row("내용", check("틀만 찍기", spec.slice.frameOnly, (on) => { spec.slice.frameOnly = on; changed(); }), null, "글자·아이콘만 숨기고 틀을 찍습니다. 글자 없는 장식 요소는 남깁니다(엔진에서 글자를 따로 그릴 때)."),
     ];
   }
 

@@ -391,6 +391,28 @@ test("내보내기: 실제 브라우저로 투명 PNG·9-slice JSON을 만든다
     const saved = JSON.parse(readFileSync(join(lib, id, "export.json"), "utf8"));
     assert.equal(saved.lastExport.files.length, 2);
 
+    // 틀만 찍기: 틀이 자식 요소(판 span)여도 남고, 글자·글자만 품은 상자(제목 칸, 구분선 목록)는 숨김.
+    // 장식을 품은 요소(.k 안의 .dot)는 상자째 남기고 글자만 투명하게.
+    const FRAME = `<!doctype html><html><head><style>html,body{margin:0;background:#202020}
+.d{position:absolute;left:20px;top:20px;width:100px;height:60px}
+.f{position:absolute;inset:0;background:#3a6}
+.t{position:absolute;left:10px;top:8px;width:30px;height:12px;margin:0;background:#f00;font:10px sans-serif}
+.l{position:absolute;left:50px;top:30px;width:40px;height:20px;margin:0;padding:0;list-style:none;border-top:4px solid #00f}
+.k{position:absolute;left:10px;top:38px;width:30px;height:16px;background:#ff0;color:#000;font:12px sans-serif}
+.dot{position:absolute;left:0;top:0;width:6px;height:16px;background:#fff}
+</style></head><body><div class="d"><span class="f"></span><h2 class="t">제목</h2><ul class="l"><li>항목</li></ul><b class="k">글자<i class="dot"></i></b></div></body></html>`;
+    const fo = await req(srv.port, "POST", path, { headers: T, body: { html: FRAME, write: false, spec: { name: "frame", target: { kind: "element", path: [1, 0] }, bounds: "box",
+      slice: { mode: "nine", insets: { l: 10, t: 10, r: 10, b: 10 }, size: "original", frameOnly: true } } } });
+    assert.equal(fo.status, 200, fo.text);
+    const fi = decodePng(Buffer.from(fo.json.previews[0].url.split(",")[1], "base64"));
+    assert.equal(fi.width, 100);
+    assert.deepEqual(px(fi, 3, 3).slice(0, 3), [0x33, 0xaa, 0x66], "자식 요소로 그린 판은 남음");
+    assert.deepEqual(px(fi, 25, 14).slice(0, 3), [0x33, 0xaa, 0x66], "글자만 품은 제목 칸은 상자째 숨김");
+    assert.deepEqual(px(fi, 70, 31).slice(0, 3), [0x33, 0xaa, 0x66], "글자만 품은 목록의 구분선도 숨김");
+    assert.deepEqual(px(fi, 3 + 10, 46).slice(0, 3), [255, 255, 255], "장식(.dot)은 남음");
+    const kRow = Array.from({ length: 22 }, (_, i) => px(fi, 17 + i, 46).slice(0, 3).join());
+    assert.ok(kRow.every((c) => c === "255,255,0"), "장식을 품은 상자는 남고 글자는 투명: " + [...new Set(kRow)]);
+
     // 미리보기는 파일을 쓰지 않고 data URL만
     const before = readFileSync(join(dir, "panel.png"));
     const pv = await req(srv.port, "POST", path, { headers: T, body: { spec: { name: "panel" }, write: false, html: PANEL.replace("#3a6", "#36a") } });

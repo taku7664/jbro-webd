@@ -49,8 +49,28 @@ async function preparePage(arg, applyState, rewriteCss, getAnimInfo) {
     css += "body *:not([data-webd-target]):not([data-webd-target] *){visibility:hidden!important}[data-webd-target]{visibility:visible!important}";
   }
   if (arg.frameOnly) {
-    css += "[data-webd-target] *{visibility:hidden!important}" +
-      "[data-webd-target]{-webkit-text-fill-color:transparent!important;text-shadow:none!important;caret-color:transparent!important}";
+    // 글자·아이콘만 숨기고 틀을 그리는 장식은 남긴다. 틀이 대상 자신(배경·::before)이든 자식 요소(판·모서리 span)든 같다.
+    //  - 내용: 글자(직접 텍스트, ::before/::after의 글자), 이미지·아이콘(img·svg·video·canvas·입력, content: url())
+    //  - 장식: 내용이 없는 요소. 내용만 품은 요소(제목 줄, 구분선 있는 목록 등)는 상자째 숨기고,
+    //    장식을 품은 요소는 남긴 채 그 안의 내용만 숨긴다.
+    const MEDIA = new Set(["IMG", "SVG", "VIDEO", "CANVAS", "PICTURE", "IFRAME", "OBJECT", "EMBED", "INPUT", "TEXTAREA", "SELECT", "METER", "PROGRESS"]);
+    const pseudoContent = (el) => ["::before", "::after"].some((p) => {
+      const c = getComputedStyle(el, p).content;
+      return c && c !== "none" && c !== "normal" && (/url\(/.test(c) || /\S/.test(c.replace(/^["']|["']$/g, "").replace(/\\["']/g, "")));
+    });
+    const own = (el) => MEDIA.has(el.tagName.toUpperCase()) || [...el.childNodes].some((n) => n.nodeType === 3 && /\S/.test(n.data)) || pseudoContent(el);
+    // 반환: { content: 내용이 있음, decor: 내용 없는 장식 요소가 있음(자신 포함) }
+    const walk = (el, isTarget) => {
+      if (MEDIA.has(el.tagName.toUpperCase())) return { content: true, decor: false };
+      const kids = [...el.children].map((k) => walk(k, false));
+      const content = own(el) || kids.some((k) => k.content);
+      const decor = !own(el) && !kids.some((k) => k.content) || kids.some((k) => k.decor);
+      if (!isTarget && content && !decor) el.setAttribute("data-webd-content", "");
+      return { content, decor };
+    };
+    walk(target, true);
+    css += "[data-webd-target] [data-webd-content]{visibility:hidden!important}" +
+      "[data-webd-target],[data-webd-target] *,[data-webd-target]::before,[data-webd-target]::after,[data-webd-target] *::before,[data-webd-target] *::after{-webkit-text-fill-color:transparent!important;text-shadow:none!important;caret-color:transparent!important}";
   }
   const st = document.createElement("style"); st.id = "webd-export-style"; st.textContent = css;
   document.head.append(st);
