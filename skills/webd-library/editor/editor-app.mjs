@@ -7,6 +7,7 @@ import {
   varRefs, countVarUses, nudge, lineOf,
 } from "./css-model.mjs";
 import { initExport } from "./export-panel.mjs";
+import { bodyRange, replaceBody, cssForCopy, mergeCss, classValue, clipboardText } from "./structure.mjs";
 
 const $ = (id) => document.getElementById(id);
 /** 로컬 시간대 오프셋을 붙인 ISO 문자열(library.mjs의 localIso와 같은 형식) */
@@ -21,7 +22,20 @@ const STATE_PSEUDO = /:(hover|focus|focus-visible|focus-within|active|visited|ta
 const S = {
   meta: null, source: "", hash: "", saved: [], styles: [], undo: [], redo: [], log: [],
   selected: null, selPath: null, hovered: null, pick: false, all: false, editable: true, editing: null, conflict: false,
+  // 구조 편집: 원문을 따로 읽은 문서(model)를 고치고 미리보기에 옮긴다. 저장할 때만 <body> 안쪽을 바꿔 넣는다.
+  model: null, savedBody: "", struct: { ok: false, reason: "아직 불러오는 중입니다." },
 };
+const CLIP_KEY = "webd-editor-clipboard";
+function buildModel(html) {
+  S.model = new DOMParser().parseFromString(html, "text/html");
+  S.savedBody = S.model.body.innerHTML;
+}
+const bodyChanged = () => Boolean(S.model) && S.model.body.innerHTML !== S.savedBody;
+/** 저장·내보내기에 쓸 문서: 구조를 바꿨으면 <body> 안쪽을 바꾸고, <style>은 화면의 CSS로 */
+function sourceWithEdits() {
+  const base = bodyChanged() ? replaceBody(S.source, S.model.body.innerHTML) : S.source;
+  return replaceStyleBlocks(base, S.styles);
+}
 let win = null, doc = null, styleEls = [], needDraw = true, draftTimer = null, firstLoad = true;
 const collapsed = new Set();
 
@@ -40,6 +54,7 @@ async function load() {
   const d = await r.json();
   $("back").hidden = !d.library;
   S.meta = d.meta; S.source = d.html; S.hash = d.hash; S.conflict = false;
+  buildModel(d.html);
   $("canvas").classList.toggle("ui-checkerboard", !d.meta.background);
   $("preview-bg").textContent = d.meta.background ? "조각 원본 배경" : "투명 배경";
   S.saved = styleBlocks(d.html);
@@ -51,11 +66,17 @@ async function load() {
   hideBanner();
   $("frame").src = `/lib/${encodeURIComponent(ID)}/component.html?h=${d.hash}`;
   updateState();
+  const draftBody = typeof d.draft?.body === "string" && d.draft.body !== S.savedBody ? d.draft.body : null;
   if (firstLoad && d.draft && d.draft.baseHash === d.hash && Array.isArray(d.draft.styles) &&
-      d.draft.styles.length === S.saved.length && d.draft.styles.some((t, i) => t !== S.saved[i])) {
+      d.draft.styles.length === S.saved.length && (draftBody != null || d.draft.styles.some((t, i) => t !== S.saved[i]))) {
     const when = String(d.draft.savedAt || "").slice(0, 16).replace("T", " ");
     banner(`저장하지 않은 화면 변경이 남아 있습니다${when ? ` (${when})` : ""}.`, [
-      ["이어서 편집", () => { record(); S.styles = d.draft.styles.slice(); S.log = d.draft.log || []; afterChange(); hideBanner(); }],
+      ["이어서 편집", () => {
+        pushUndo({ dom: S.model.body.innerHTML, styles: S.styles.slice(), log: S.log.slice() });
+        S.styles = d.draft.styles.slice(); S.log = d.draft.log || [];
+        if (draftBody != null) { S.model.body.innerHTML = draftBody; syncLive(S.selPath); }
+        afterChange(); hideBanner();
+      }],
       ["버리기", () => { api("/draft", { method: "POST", body: "null" }); hideBanner(); }],
     ]);
   }
@@ -66,7 +87,7 @@ async function save(force = false) {
   if (S.editing) commitEditing();
   if (!isDirty() && !force) return;
   let html;
-  try { html = replaceStyleBlocks(S.source, S.styles); } catch (e) { banner(e.message); return; }
+  try { html = sourceWithEdits(); } catch (e) { banner(e.message); return; }
   setState("저장 중…");
   const r = await api("/save", { method: "POST", body: JSON.stringify({ html, baseHash: S.hash, force }) });
   const d = await r.json().catch(() => ({}));
@@ -81,6 +102,8 @@ async function save(force = false) {
   if (!r.ok) { banner(`저장하지 못했습니다: ${d.error || r.status}`); updateState(); return; }
   S.source = d.html; S.hash = d.hash; S.meta = d.meta; S.conflict = false;
   S.saved = styleBlocks(d.html); S.log = [];
+  // 저장한 원문으로 모델을 다시 만들되, 미리보기와 같은 구조인지 확인해 둔다(경로가 그대로 맞아야 한다)
+  buildModel(d.html);
   hideBanner(); updateState(`저장됨 · 버전 ${d.meta.versions}`);
 }
 
@@ -95,7 +118,7 @@ function scheduleDraft() {
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => {
     const body = isDirty()
-      ? { baseHash: S.hash, baseUpdatedAt: S.meta.updatedAt, savedAt: nowLocal(), styles: S.styles, log: S.log }
+      ? { baseHash: S.hash, baseUpdatedAt: S.meta.updatedAt, savedAt: nowLocal(), styles: S.styles, log: S.log, ...(bodyChanged() ? { body: S.model.body.innerHTML } : {}) }
       : null;
     api("/draft", { method: "POST", body: JSON.stringify(body) }).catch(() => {});
   }, 800);
@@ -117,7 +140,7 @@ function listen() {
 
 // ---------- 상태 ----------
 
-const isDirty = () => S.styles.length !== S.saved.length || S.styles.some((t, i) => t !== S.saved[i]);
+const isDirty = () => S.styles.length !== S.saved.length || S.styles.some((t, i) => t !== S.saved[i]) || bodyChanged();
 function setState(text) { $("state").textContent = text; }
 function updateState(text) {
   const dirty = isDirty();
@@ -152,6 +175,12 @@ function applyEntry(entry) {
     updateState();
     return { exportSpec: cur };
   }
+  if ("dom" in entry) {   // 구조 변경(요소 추가·삭제·붙여넣기 등). 같이 바뀐 CSS도 함께 되돌린다
+    const cur = { dom: S.model.body.innerHTML, styles: S.styles.slice(), log: S.log.slice() };
+    S.model.body.innerHTML = entry.dom; S.styles = entry.styles; S.log = entry.log;
+    syncLive(S.selPath); afterChange();
+    return cur;
+  }
   const cur = { styles: S.styles.slice(), log: S.log.slice() };
   S.styles = entry.styles; S.log = entry.log; afterChange();
   return cur;
@@ -180,7 +209,7 @@ function applyStyles() {
 /** 지금 화면 그대로의 문서(저장 안 한 CSS 변경 포함). 내보내기가 쓴다. */
 function currentHtml() {
   if (!S.source) throw new Error("아직 조각을 불러오지 못했습니다.");
-  return S.editable ? replaceStyleBlocks(S.source, S.styles) : S.source;
+  return S.editable ? sourceWithEdits() : S.source;
 }
 
 function setupViewports(vp) {
@@ -205,7 +234,10 @@ $("frame").addEventListener("load", () => {
   styleEls = [...doc.querySelectorAll("style")];
   S.editable = styleEls.length === S.saved.length && styleEls.every((el, i) => norm(el.textContent) === norm(S.saved[i]));
   if (!S.editable) banner("이 컴포넌트는 스크립트가 <style>을 더하거나 바꿔서 화면에서 편집할 수 없습니다. 고칠 내용을 에이전트에게 말로 요청하세요.");
+  S.struct = checkStruct();
+  if (S.struct.ok && bodyChanged()) syncLive(S.selPath);   // 초안에서 이어 편집한 구조를 화면에 옮긴다
   applyStyles();
+  doc.addEventListener("contextmenu", (e) => { if (!S.pick) return; e.preventDefault(); select(e.target); openMenu(e.clientX + $("frame").getBoundingClientRect().left, e.clientY + $("frame").getBoundingClientRect().top, S.selected); }, true);
   doc.addEventListener("mousemove", (e) => { if (!S.pick) return; const t = e.target; S.hovered = t && t.nodeType === 1 && t !== doc.documentElement ? t : null; needDraw = true; }, true);
   doc.addEventListener("mouseleave", () => { S.hovered = null; needDraw = true; });
   doc.addEventListener("click", (e) => { if (!S.pick) return; e.preventDefault(); e.stopPropagation(); select(e.target); }, true);
@@ -222,6 +254,268 @@ $("frame").addEventListener("load", () => {
     renderTree();
   }).observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["id", "class"] });
 });
+
+// ---------- 구조 편집(유니티 하이라키처럼) ----------
+// 잘라내기·복사·붙여넣기·자식으로 붙여넣기·복제·삭제·이름 바꾸기(클래스)·만들기·빈 부모 만들기·맨 앞/뒤로.
+// model(원문을 읽은 문서)을 고치고 미리보기 body를 model로 바꿔 끼운다. 되돌리기 한 칸 = 구조 변경 한 번.
+
+/** 미리보기와 원문 구조가 같을 때만 구조 편집을 연다(스크립트가 본문을 바꾸면 경로가 어긋난다). */
+function checkStruct() {
+  if (!S.editable) return { ok: false, reason: "스크립트가 <style>을 바꾸는 컴포넌트라 구조를 편집할 수 없습니다." };
+  if (!bodyRange(S.source)) return { ok: false, reason: "<body> 태그가 없거나 여러 개라 구조를 편집할 수 없습니다." };
+  const fresh = new DOMParser().parseFromString(S.source, "text/html");
+  const skeleton = (b) => [...b.querySelectorAll("*")].map((e) => e.tagName).join(",");
+  if (skeleton(fresh.body) !== skeleton(doc.body)) return { ok: false, reason: "스크립트가 본문 요소를 바꾸는 컴포넌트라 구조 편집(복사·추가·삭제)을 막았습니다. CSS 편집은 됩니다." };
+  return { ok: true };
+}
+const modelAt = (path) => { let n = S.model.documentElement; for (const i of path || []) { n = n?.children[i]; if (!n) return null; } return n; };
+function modelPath(n) { const p = []; while (n && n.parentElement) { p.unshift([...n.parentElement.children].indexOf(n)); n = n.parentElement; } return p; }
+
+/** 미리보기 body를 model로 바꿔 끼우고, path의 요소를 고른다. */
+function syncLive(path) {
+  if (!doc?.body || !S.model) return;
+  doc.body.replaceChildren(...[...S.model.body.childNodes].map((n) => doc.importNode(n, true)));
+  styleEls = [...doc.querySelectorAll("style")];
+  styleEls.forEach((s, i) => { if (S.styles[i] != null) s.textContent = S.styles[i]; });
+  const next = path ? resolvePath(path) : null;
+  S.selected = next && next !== doc.documentElement ? next : null; S.selPath = S.selected ? pathOf(S.selected) : null;
+  for (let n = S.selected?.parentElement; n && n !== doc.documentElement; n = n.parentElement) collapsed.delete(pathOf(n).join("."));
+  needDraw = true; renderTree();
+  exp?.frameLoaded(); exp?.stylesChanged();
+}
+
+let flashTimer = null;
+function flash(text) { clearTimeout(flashTimer); setState(text); flashTimer = setTimeout(() => updateState(), 2600); }
+
+/** 구조 변경 한 번. fn()이 { select: model 요소|null }을 돌려주면 기록하고 화면에 옮긴다. false면 취소. */
+function mutate(kind, fn, detail = {}) {
+  if (!S.struct.ok) { flash(S.struct.reason); return false; }
+  if (S.editing) commitEditing();
+  const pre = { dom: S.model.body.innerHTML, styles: S.styles.slice(), log: S.log.slice() };
+  const styleCount = S.model.querySelectorAll("style").length;
+  const res = fn();
+  if (!res) return false;
+  if (S.model.querySelectorAll("style").length !== styleCount) {   // <style> 수가 바뀌면 CSS 편집이 어긋난다
+    S.model.body.innerHTML = pre.dom; S.styles = pre.styles;
+    flash("<style>이 들어 있는 요소는 복사·삭제할 수 없습니다."); return false;
+  }
+  pushUndo(pre);
+  S.log.push({ at: nowLocal(), kind, ...detail });
+  syncLive(res.select ? modelPath(res.select) : null);
+  afterChange();
+  return true;
+}
+
+// 들여쓰기를 지키며 넣고 뺀다
+const isWs = (n) => n && n.nodeType === 3 && !n.textContent.trim();
+function insertAfter(ref, node) {
+  const ws = isWs(ref.previousSibling) ? ref.previousSibling.cloneNode() : null;
+  ref.parentNode.insertBefore(node, ref.nextSibling);
+  if (ws) ref.parentNode.insertBefore(ws, node);
+}
+function insertFirst(parent, node) {
+  const first = parent.firstElementChild;
+  if (!first) return appendChildTidy(parent, node);
+  const ws = isWs(first.previousSibling) ? first.previousSibling.cloneNode() : null;
+  parent.insertBefore(node, first);
+  if (ws) parent.insertBefore(ws, first);
+}
+function appendChildTidy(parent, node) {
+  if (parent.lastElementChild) return insertAfter(parent.lastElementChild, node);
+  if (parent.textContent.trim()) { parent.append(node); return; }
+  // 빈 부모: 부모의 들여쓰기 + 2칸
+  const before = parent.previousSibling;
+  const base = isWs(before) ? before.textContent.replace(/^[\s\S]*\n/, "") : "";
+  const doc0 = parent.ownerDocument;
+  parent.replaceChildren(doc0.createTextNode(`\n${base}  `), node, doc0.createTextNode(`\n${base}`));
+}
+function removeTidy(node) {
+  if (isWs(node.previousSibling)) node.previousSibling.remove();
+  node.remove();
+}
+
+const selectedModel = () => (S.selected && S.selected !== doc?.body && S.selected.isConnected ? modelAt(S.selPath) : null);
+const readClip = () => { try { return JSON.parse(localStorage.getItem(CLIP_KEY) || "null"); } catch { return null; } };
+const writeClip = (v) => { try { v ? localStorage.setItem(CLIP_KEY, JSON.stringify(v)) : localStorage.removeItem(CLIP_KEY); } catch {} };
+
+/** 복사(cut이면 잘라내기 표시). 다른 컴포넌트에 붙여도 모양이 같도록 걸린 CSS도 함께 담는다. */
+function copySelected(cut = false) {
+  const live = S.selected && S.selected !== doc?.body && S.selected.isConnected ? S.selected : null;
+  // 구조 편집을 막은 컴포넌트도 복사는 된다(화면에 보이는 요소 그대로). 잘라내기는 구조 편집이 필요하다.
+  const m = S.struct.ok ? selectedModel() : live;
+  if (!m || !live) { flash("복사할 요소를 하이라키에서 고르세요(body는 복사하지 않습니다)."); return; }
+  if (cut && !S.struct.ok) { flash(S.struct.reason); return; }
+  const ancestors = []; for (let n = live.parentElement; n; n = n.parentElement) ancestors.push(n);
+  // 토큰은 복사한 요소의 클래스(없으면 id, 그것도 없으면 :root) 안에만 담아 붙여넣은 곳의 토큰을 덮어쓰지 않는다
+  const scope = live.classList.length ? "." + [...live.classList].map((c) => CSS.escape(c)).join(".") : live.id ? "#" + CSS.escape(live.id) : ":root";
+  const css = cssForCopy(S.styles, (sel) => live.matches(sel) || Boolean(live.querySelector(sel)), (sel) => ancestors.some((a) => a.matches(sel)), scope);
+  const clip = { v: 1, from: ID, html: m.outerHTML, css, label: label(m), cut: cut ? { path: S.selPath.slice(), html: m.outerHTML } : null };
+  writeClip(clip);
+  navigator.clipboard?.writeText(clipboardText(clip.html, css)).catch(() => {});
+  flash(`${cut ? "잘라냄" : "복사함"}: ${clip.label}${css ? " (+CSS)" : ""}`);
+  renderTree();
+}
+
+/** 붙여넣기: 고른 요소 바로 뒤(형제)로, asChild면 그 안 마지막 자식으로. 고른 게 없으면 body 끝. */
+function paste(asChild = false) {
+  const clip = readClip();
+  if (!clip?.html) { flash("붙여넣을 요소가 없습니다. 먼저 복사하세요(Ctrl+C)."); return; }
+  mutate(clip.cut && clip.from === ID ? "element-move" : "element-paste", () => {
+    const tpl = S.model.createElement("template"); tpl.innerHTML = clip.html;
+    const node = tpl.content.firstElementChild; if (!node) return false;
+    const sel = selectedModel();
+    let src = null;
+    if (clip.cut && clip.from === ID) {
+      src = modelAt(clip.cut.path);
+      if (!src || src.outerHTML !== clip.cut.html) src = null;       // 그새 바뀌었으면 복사처럼 붙인다
+      if (src && sel && (src === sel && !asChild)) { writeClip({ ...clip, cut: null }); return false; }  // 제자리
+      if (src && sel && src.contains(sel)) { flash("자기 안으로는 옮길 수 없습니다."); return false; }
+    }
+    if (clip.from !== ID && clip.css) {
+      if (S.styles.length) {
+        const k = S.styles.length - 1; const r = mergeCss(S.styles[k], clip.css, `${clip.from}에서 붙여넣은 ${clip.label}`);
+        if (r.added) { S.styles = S.styles.slice(); S.styles[k] = r.text; }
+      }
+    }
+    if (!sel) appendChildTidy(S.model.body, node);
+    else if (asChild) appendChildTidy(sel, node);
+    else insertAfter(sel, node);
+    if (src) { removeTidy(src); writeClip({ ...clip, cut: null }); }
+    return { select: node };
+  }, { label: clip.label, from: clip.from });
+}
+
+function duplicateSelected() {
+  const m = selectedModel(); if (!m) { flash("복제할 요소를 고르세요."); return; }
+  mutate("element-duplicate", () => { const c = m.cloneNode(true); insertAfter(m, c); return { select: c }; }, { label: label(m) });
+}
+function deleteSelected() {
+  const m = selectedModel(); if (!m) { flash("삭제할 요소를 고르세요(body는 지울 수 없습니다)."); return; }
+  mutate("element-delete", () => { removeTidy(m); return { select: null }; }, { label: label(m) });
+}
+function moveSibling(first) {
+  const m = selectedModel(); if (!m) return;
+  const p = m.parentElement;
+  if ((first ? p.firstElementChild : p.lastElementChild) === m) { flash(first ? "이미 맨 앞입니다." : "이미 맨 뒤입니다."); return; }
+  mutate(first ? "element-first" : "element-last", () => { removeTidy(m); first ? insertFirst(p, m) : appendChildTidy(p, m); return { select: m }; }, { label: label(m) });
+}
+function wrapInParent() {
+  const m = selectedModel(); if (!m) { flash("감쌀 요소를 고르세요."); return; }
+  mutate("element-wrap", () => {
+    const wrap = S.model.createElement("div");
+    insertAfter(m, wrap); removeTidy(m); appendChildTidy(wrap, m);
+    return { select: wrap };
+  }, { label: label(m) });
+  if (S.selected) startRename(S.selPath);
+}
+const CREATE = {
+  empty: { tag: "div", label: "빈 요소" },
+  text: { tag: "span", text: "텍스트", label: "텍스트" },
+  button: { tag: "button", text: "버튼", attrs: { type: "button" }, label: "버튼" },
+};
+/** 만들기. parentPath가 없으면 body 끝(최상위), 있으면 그 요소의 마지막 자식. 만든 뒤 바로 이름(클래스) 입력. */
+function createElement(kind, parentPath) {
+  const def = CREATE[kind];
+  const ok = mutate("element-add", () => {
+    const parent = parentPath ? modelAt(parentPath) : S.model.body; if (!parent) return false;
+    const n = S.model.createElement(def.tag);
+    for (const [k, v] of Object.entries(def.attrs || {})) n.setAttribute(k, v);
+    if (def.text) n.textContent = def.text;
+    appendChildTidy(parent, n);
+    return { select: n };
+  }, { tag: def.tag });
+  if (ok && S.selected) startRename(S.selPath);
+}
+function renameAt(path, value) {
+  const m = modelAt(path); if (!m || m === S.model.body) return;
+  const next = classValue(value);
+  if ((m.getAttribute("class") || "") === next) return;
+  mutate("element-rename", () => { next ? m.setAttribute("class", next) : m.removeAttribute("class"); return { select: m }; }, { from: m.getAttribute("class") || "", to: next });
+}
+function setTextAt(path, text) {
+  const m = modelAt(path); if (!m || m.textContent === text) return;
+  mutate("element-text", () => { m.textContent = text; return { select: m }; }, { label: label(m) });
+}
+
+/** 하이라키에서 이름(클래스) 바꾸기 입력. Enter·포커스 해제 = 확정, Esc = 취소 */
+function startRename(path) {
+  // 구조를 바꾼 직후면 하이라키를 다시 그리는 일(MutationObserver)이 먼저 끝난 뒤 입력칸을 띄운다
+  if (!S.struct.ok || !path) return;
+  setTimeout(() => startRenameNow(path), 0);
+}
+function startRenameNow(path) {
+  const key = path.join(".");
+  const item = [...$("tree").querySelectorAll(".tree-item")].find((n) => n.dataset.path === key);
+  const pick = item?.querySelector(":scope > .tree-row > .tree-pick"); if (!pick) return;
+  const live = resolvePath(path); if (!live || live === doc.body) return;
+  const box = el("span", { class: "tree-rename" }, el("span", { class: "tree-rename-tag", text: live.tagName.toLowerCase() + "." }));
+  const inp = el("input", { type: "text", value: live.getAttribute("class") || "", placeholder: "클래스 이름", spellcheck: "false", autocomplete: "off", "aria-label": "클래스 이름 (공백으로 여러 개)" });
+  box.append(inp); pick.replaceWith(box);
+  inp.focus(); inp.select();
+  let done = false;
+  const finish = (commit) => { if (done) return; done = true; if (commit) renameAt(path, inp.value); renderTree(); $("tree").querySelector('[aria-selected="true"] > .tree-row > .tree-pick')?.focus(); };
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+    e.stopPropagation();
+  });
+  inp.addEventListener("blur", () => finish(true));
+}
+
+// ---------- 오른쪽 클릭 메뉴 ----------
+let menuEl = null;
+function closeMenu() { menuEl?.remove(); menuEl = null; }
+function openMenu(x, y, target) {
+  closeMenu();
+  const isBody = !target || target === doc?.body;
+  const clip = readClip();
+  const path = isBody ? null : pathOf(target);
+  const can = S.struct.ok;
+  const items = [
+    ["잘라내기", "Ctrl+X", () => copySelected(true), isBody],
+    ["복사", "Ctrl+C", () => copySelected(false), isBody],
+    ["붙여넣기", "Ctrl+V", () => paste(false), !clip?.html],
+    ["자식으로 붙여넣기", "Ctrl+Shift+V", () => paste(true), !clip?.html],
+    null,
+    ["이름 바꾸기", "F2", () => startRename(path), isBody],
+    ["복제", "Ctrl+D", () => duplicateSelected(), isBody],
+    ["삭제", "Delete", () => deleteSelected(), isBody],
+    null,
+    ["맨 앞으로", "", () => moveSibling(true), isBody],
+    ["맨 뒤로", "", () => moveSibling(false), isBody],
+    ["빈 부모 만들기", "Ctrl+Shift+G", () => wrapInParent(), isBody],
+    null,
+    [isBody ? "빈 요소 만들기" : "빈 자식 만들기", isBody ? "" : "Alt+Shift+N", () => createElement("empty", path), false],
+    [isBody ? "텍스트 만들기" : "자식 텍스트 만들기", "", () => createElement("text", path), false],
+    [isBody ? "버튼 만들기" : "자식 버튼 만들기", "", () => createElement("button", path), false],
+  ];
+  menuEl = el("div", { class: "ctx-menu", role: "menu", "aria-label": isBody ? "하이라키" : label(target) });
+  if (!can) menuEl.append(el("p", { class: "ctx-note", text: S.struct.reason }));
+  for (const it of items) {
+    if (!it) { menuEl.append(el("div", { class: "ctx-sep", role: "separator" })); continue; }
+    const [text, key, fn, off] = it;
+    const b = el("button", { type: "button", role: "menuitem", class: "ctx-item", disabled: off || (!can && text !== "복사") ? true : null },
+      el("span", { text }), el("kbd", { text: key }));
+    b.addEventListener("click", () => { closeMenu(); fn(); });
+    menuEl.append(b);
+  }
+  menuEl.addEventListener("keydown", (e) => {
+    const list = [...menuEl.querySelectorAll(".ctx-item:not(:disabled)")];
+    const i = list.indexOf(document.activeElement);
+    if (e.key === "ArrowDown") { e.preventDefault(); list[(i + 1) % list.length]?.focus(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); list[(i - 1 + list.length) % list.length]?.focus(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeMenu(); }
+    e.stopPropagation();
+  });
+  document.body.append(menuEl);
+  const r = menuEl.getBoundingClientRect();
+  menuEl.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + "px";
+  menuEl.style.top = Math.max(4, Math.min(y, innerHeight - r.height - 4)) + "px";
+  menuEl.querySelector(".ctx-item:not(:disabled)")?.focus();
+}
+addEventListener("pointerdown", (e) => { if (menuEl && !menuEl.contains(e.target)) closeMenu(); }, true);
+addEventListener("blur", closeMenu);
+addEventListener("resize", closeMenu);
 
 function pathOf(el) { const p = []; while (el && el.parentElement) { p.unshift([...el.parentElement.children].indexOf(el)); el = el.parentElement; } return p; }
 function resolvePath(p) { let el = doc.documentElement; for (const i of p) { el = el?.children[i]; if (!el) return null; } return el; }
@@ -282,6 +576,10 @@ function renderTree() {
     icon.style.maskImage = `url(/assets/icon-${iconFor(node)}.svg)`;
     pick.append(icon, document.createTextNode(label(node)));
     pick.title = label(node); pick.onclick = () => select(node, true);
+    if (node !== doc.body) pick.ondblclick = (e) => { e.preventDefault(); select(node, true); startRename(pathOf(node)); };
+    row.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); select(node, true); openMenu(e.clientX, e.clientY, node); };
+    const clip = readClip();
+    if (clip?.cut && clip.from === ID && clip.cut.path.join(".") === path) item.classList.add("is-cut");
     row.append(toggle, pick); item.append(row);
     if (children.length && !collapsed.has(path)) {
       const group = document.createElement("div"); group.className = "tree-children"; group.setAttribute("role", "group");
@@ -441,6 +739,17 @@ function renderPanel() {
   const chain = []; for (let n = target; n && n !== doc.documentElement; n = n.parentElement) chain.unshift(n);
   root.append(el("ol", { class: "crumbs", "aria-label": "요소 경로" }, ...chain.map((n) => el("li", {},
     n === target ? el("span", { "aria-current": "true", text: label(n) }) : el("button", { type: "button", text: label(n), onclick: () => select(n) })))));
+
+  // 글자 내용(자식 요소가 없는 요소만). 만든 텍스트·버튼의 글을 여기서 바꾼다.
+  const VOID = /^(img|input|br|hr|meta|link|source|track|wbr|area|col|embed|param|textarea|select|svg|canvas|video|audio|iframe|script|style)$/i;
+  if (S.struct.ok && target !== doc.body && !target.children.length && !VOID.test(target.tagName)) {
+    const path = S.selPath.slice();
+    const ta = el("input", { type: "text", class: "text-content", "data-key": "text-content", "aria-label": "글자 내용", spellcheck: "false", autocomplete: "off", placeholder: "(비어 있음)" });
+    ta.value = target.textContent;
+    ta.addEventListener("change", () => setTextAt(path, ta.value));
+    ta.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ta.blur(); } });
+    root.append(el("div", { class: "text-row" }, el("span", { class: "text-label", text: "글자" }), ta));
+  }
 
   // 박스 모델 그림
   const bx = boxOf(target);
@@ -659,10 +968,34 @@ const TEXT_INPUT = /^(text|search|number|url|email|tel)$/;
 const isTextField = (t) => t?.tagName === "TEXTAREA" || (t?.tagName === "INPUT" && TEXT_INPUT.test(t.type));
 document.addEventListener("focusin", (e) => { if (isTextField(e.target)) e.target._focusValue = e.target.value; }, true);
 
+// 하이라키 빈 곳 오른쪽 클릭과 + 버튼: 최상위(body)에 만들기·붙여넣기
+$("tree").addEventListener("contextmenu", (e) => { if (e.defaultPrevented) return; e.preventDefault(); openMenu(e.clientX, e.clientY, doc?.body); });
+$("tree-add").addEventListener("click", (e) => {
+  const r = e.currentTarget.getBoundingClientRect();
+  openMenu(r.left, r.bottom + 4, S.selected && S.selected.isConnected ? S.selected : doc?.body);
+});
+
+/** 하이라키 단축키(유니티와 같은 조합). 글자 칸에서 고치는 중이거나 화면 글자를 드래그해 골랐으면 브라우저 기본 동작을 둔다. */
+function hierarchyKey(e, typing) {
+  if (typing || menuEl) return false;
+  const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;
+  const textSelected = String(getSelection?.() || "").length > 0 || String(win?.getSelection?.() || "").length > 0;
+  if (mod && !e.shiftKey && !e.altKey && k === "c") { if (textSelected) return false; copySelected(false); return true; }
+  if (mod && !e.shiftKey && !e.altKey && k === "x") { if (textSelected) return false; copySelected(true); return true; }
+  if (mod && !e.altKey && k === "v") { paste(e.shiftKey); return true; }
+  if (mod && !e.shiftKey && !e.altKey && k === "d") { duplicateSelected(); return true; }
+  if (mod && e.shiftKey && !e.altKey && k === "g") { wrapInParent(); return true; }
+  if (!mod && e.altKey && e.shiftKey && k === "n") { createElement("empty", S.selected && S.selected !== doc?.body ? S.selPath : null); return true; }
+  if (!mod && !e.altKey && e.key === "Delete") { deleteSelected(); return true; }
+  if (!mod && !e.altKey && e.key === "F2" && S.selected && S.selected !== doc?.body) { startRename(S.selPath); return true; }
+  return false;
+}
+
 function onKey(e) {
   const mod = e.ctrlKey || e.metaKey;
   const active = e.target.ownerDocument === document ? document.activeElement : e.target;
   const typing = isTextField(active);
+  if (hierarchyKey(e, typing)) { e.preventDefault(); return; }
   // 칸 안에서 고치던 글자가 있으면 그 칸의 되돌리기를 쓰고, 없으면 편집기 기록으로 넘긴다
   const fieldHasEdits = typing && active.value !== active._focusValue;
   const historyKey = mod && !e.altKey && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y");
