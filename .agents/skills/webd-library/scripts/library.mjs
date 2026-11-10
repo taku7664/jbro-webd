@@ -19,6 +19,9 @@
 //   path
 //   open   [--port <번호>] [--no-open]        라이브러리 서버를 열고 목록을 띄움. 카드를 누르면 편집기, 편집기에서 내보내기 (Ctrl+C로 닫음)
 //   edit   <id> [--port <번호>] [--no-open]   같은 서버를 열고 그 항목의 편집기를 바로 띄움
+//   atlas  <이름> [--members id,id] [--max 512|1024|2048|4096] [--pot] [--padding n] [--extrude n] [--no-trim] [--scales 1,2]
+//          묶음 시트: 컴포넌트 여러 개를 각자의 export.json대로 찍어 한 장(넘치면 여러 장)에 빽빽하게 모아 쓴다.
+//          --members 등을 주면 묶음 정의(<라이브러리>/.atlases/<이름>.json)를 고친 뒤 내보낸다. atlas --list는 목록.
 //
 // 종료 코드: 0 성공 · 1 사용 오류 · 3 대상 없음
 
@@ -340,6 +343,9 @@ function parseArgs(argv) {
     const a = rest[i];
     if (a === "--json") o.json = true;
     else if (a === "--no-open") o.noOpen = true;
+    else if (a === "--pot") o.pot = true;
+    else if (a === "--no-trim") o.trim = false;
+    else if (a === "--list") o.list = true;
     else if (a.startsWith("--")) {
       const [k, v] = a.includes("=") ? [a.slice(2, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a.slice(2), rest[++i]];
       if (v === undefined) throw usage(`${a}에 값이 없습니다.`);
@@ -360,6 +366,49 @@ function openBrowser(url) {
   const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
     : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
   try { spawn(cmd, args, { stdio: "ignore", detached: true, windowsVerbatimArguments: false }).unref(); } catch {}
+}
+
+/** 묶음 시트: 서버를 잠깐 열어 같은 경로(POST /atlas/…)로 저장·내보내기를 하고 닫는다. */
+async function runAtlas(lib, o) {
+  const A = await import("./export/atlas.mjs");
+  if (o.list) {
+    const list = A.listAtlases(lib);
+    if (!list.length) console.log("묶음이 없습니다. 예: atlas 대화-UI --members <id>,<id>");
+    for (const a of list) console.log(`${a.name}  컴포넌트 ${a.members.length}개  최대 ${a.maxSize}${a.pot ? " (2의 거듭제곱)" : ""}  ${a.lastExport ? "마지막 내보내기 " + fmtDate(a.lastExport.at) : "아직 안 내보냄"}`);
+    return 0;
+  }
+  const name = o._[0];
+  if (!name) throw usage("묶음 이름이 필요합니다. 예: atlas 대화-UI --members <id>,<id>");
+  const prev = A.readAtlas(lib, name);
+  const patch = {};
+  if (o.members) patch.members = String(o.members).split(",").map((x) => x.trim()).filter(Boolean);
+  if (o.max) patch.maxSize = Number(o.max);
+  if (o.pot) patch.pot = true;
+  if (o.padding != null) patch.padding = Number(o.padding);
+  if (o.extrude != null) patch.extrude = Number(o.extrude);
+  if (o.trim === false) patch.trim = false;
+  if (o.scales) patch.scales = String(o.scales).split(",").map(Number);
+  if (!prev && !patch.members) throw usage(`없는 묶음: ${name}. 처음 만들 때는 --members <id>,<id>가 필요합니다.`);
+  const { startLibrary } = await import("./editor-server.mjs");
+  const srv = await startLibrary({ lib });
+  try {
+    const call = async (path, body) => {
+      const r = await fetch(`http://127.0.0.1:${srv.port}${path}`, { method: "POST", headers: { "x-webd-token": srv.token, "content-type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json().catch(() => ({ error: r.statusText }));
+      if (!r.ok) throw Object.assign(new Error(j.error || `실패 (${r.status})`), { code: r.status === 404 ? 3 : 1 });
+      return j;
+    };
+    const base = `/atlas/${encodeURIComponent(A.normalizeAtlas({ name }).atlas.name)}`;
+    if (Object.keys(patch).length) {
+      const s = await call(base, { atlas: { ...(prev ?? {}), ...patch } });
+      s.warnings.forEach((w) => console.log(`경고: ${w}`));
+    }
+    const r = await call(`${base}/export`, { write: true });
+    console.log(`묶음 시트: ${r.dir}`);
+    for (const f of r.files) console.log(`  ${f.name}${f.size ? `  ${f.size.w}×${f.size.h}` : ""}`);
+    r.warnings.forEach((w) => console.log(`경고: ${w}`));
+    return 0;
+  } finally { await srv.close(); }
 }
 
 function main() {
@@ -417,8 +466,13 @@ function main() {
         }).catch((e) => { console.error(`서버를 열지 못함: ${e.message}`); process.exit(e.code === 3 ? 3 : 1); });
         return 0;
       }
+      case "atlas": {
+        // 비동기로 끝나므로 종료 코드는 끝날 때 정한다(main의 반환값은 쓰지 않음)
+        runAtlas(lib, o).then((code) => { process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = e.code ?? 1; });
+        return undefined;
+      }
       default:
-        console.error("명령: save | list | show <id> | remove <id> | index | path | open | edit <id>  (자세한 옵션은 파일 머리 주석)");
+        console.error("명령: save | list | show <id> | remove <id> | index | path | open | edit <id> | atlas <이름>  (자세한 옵션은 파일 머리 주석)");
         return 1;
     }
   } catch (e) { console.error(e.message); return e.code ?? 1; }

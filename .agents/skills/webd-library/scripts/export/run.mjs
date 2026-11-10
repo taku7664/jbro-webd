@@ -25,40 +25,10 @@ export async function buildExport({ capture, url, spec, viewport, source, warnin
   const frameMs = animate ? Math.round(1000 / animate.fps) : 100;
   let states = all;   // 기본과 같아서 뺀 상태는 첫 배율에서 정하고 다른 배율에도 똑같이 적용한다
   for (const scale of spec.scales) {
-    const shots = [];
-    for (const st of states) {
-      let shot;
-      try { shot = await capture({ url, spec, scale, viewport, state: st.tokens.length ? st.tokens : null, animate }); }
-      catch (e) {
-        if (st.state === "normal" || !e.status || e.status >= 500) throw e;   // 기본 상태 실패·브라우저 문제는 전체 실패
-        warnings.add(`"${st.label}" 상태는 찍지 못해 뺐습니다: ${e.message}`);
-        continue;
-      }
-      shot.warnings.forEach((w) => warnings.add(w));
-      if (st.state !== "normal" && shots[0] && sameFrames(shot.frames, shots[0].shot.frames)) {
-        warnings.add(`"${st.label}" 상태는 기본과 모습이 같아 뺐습니다.`);
-        continue;
-      }
-      shots.push({ ...st, shot });
-    }
+    const shots = await captureStates({ capture, url, spec, viewport, scale, states, animate, warnings });
     if (states === all) states = shots.map(({ shot, ...st }) => st);
-    alignStates(shots);
     const normal = shots[0].shot;
-    for (const s of shots.slice(1)) {
-      if (s.shot.image.width !== normal.image.width || s.shot.image.height !== normal.image.height) {
-        warnings.add(`"${s.label}" 상태는 크기가 기본과 다릅니다(${s.shot.image.width}×${s.shot.image.height}, 기본 ${normal.image.width}×${normal.image.height}). 엔진에서 상태를 바꿀 때 크기가 튈 수 있습니다.`);
-      }
-    }
-    // 상태 × 프레임을 한 줄로 편다. 이름: 이름[_상태][_프레임번호]
-    const many = shots.length > 1;
-    const cellsOf = (s) => {
-      const animated = s.shot.frames.length > 1;
-      const stem = many ? `${spec.name}_${s.state}` : spec.name;
-      return s.shot.frames.map((fr, j) => ({
-        filename: animated ? `${stem}_${j}` : stem, state: s.state, label: s.label, image: fr.image,
-        duration: animated ? frameMs : 100, time: fr.time,
-      }));
-    };
+    const cellsOf = (s) => stateCells(spec.name, s, shots.length > 1, frameMs);
     const target = { ...spec.target, label: normal.label };
     const base = { id: source.id, name: source.name, version: source.version, target, scale };
     const frameData = (c, cell) => ({
@@ -92,6 +62,47 @@ export async function buildExport({ capture, url, spec, viewport, source, warnin
     else for (const s of shots) write([s], s.shot.frames.length > 1 ? `${spec.name}_${s.state}-sheet` : `${spec.name}_${s.state}`);
   }
   return { files, previews, warnings: [...warnings] };
+}
+
+/**
+ * 상태마다 한 번씩 찍는다(기본 + 켠 상태). 기본과 똑같은 상태·찍지 못한 상태는 빼고 경고에 남긴다.
+ * 칸 크기를 맞춘 뒤(alignStates) [{ state, label, tokens, shot }]를 돌려준다. 묶음 시트(atlas.mjs)도 이 함수를 쓴다.
+ */
+export async function captureStates({ capture, url, spec, viewport, scale, states, animate, warnings }) {
+  const shots = [];
+  for (const st of states) {
+    let shot;
+    try { shot = await capture({ url, spec, scale, viewport, state: st.tokens.length ? st.tokens : null, animate }); }
+    catch (e) {
+      if (st.state === "normal" || !e.status || e.status >= 500) throw e;   // 기본 상태 실패·브라우저 문제는 전체 실패
+      warnings.add(`"${st.label}" 상태는 찍지 못해 뺐습니다: ${e.message}`);
+      continue;
+    }
+    shot.warnings.forEach((w) => warnings.add(w));
+    if (st.state !== "normal" && shots[0] && sameFrames(shot.frames, shots[0].shot.frames)) {
+      warnings.add(`"${st.label}" 상태는 기본과 모습이 같아 뺐습니다.`);
+      continue;
+    }
+    shots.push({ ...st, shot });
+  }
+  alignStates(shots);
+  const normal = shots[0].shot;
+  for (const s of shots.slice(1)) {
+    if (s.shot.image.width !== normal.image.width || s.shot.image.height !== normal.image.height) {
+      warnings.add(`"${s.label}" 상태는 크기가 기본과 다릅니다(${s.shot.image.width}×${s.shot.image.height}, 기본 ${normal.image.width}×${normal.image.height}). 엔진에서 상태를 바꿀 때 크기가 튈 수 있습니다.`);
+    }
+  }
+  return shots;
+}
+
+/** 상태 하나의 프레임들을 시트 칸으로 편다. 이름: 이름[_상태][_프레임번호] */
+export function stateCells(name, s, many, frameMs) {
+  const animated = s.shot.frames.length > 1;
+  const stem = many ? `${name}_${s.state}` : name;
+  return s.shot.frames.map((fr, j) => ({
+    filename: animated ? `${stem}_${j}` : stem, state: s.state, label: s.label, image: fr.image,
+    duration: animated ? frameMs : 100, time: fr.time,
+  }));
 }
 
 /**

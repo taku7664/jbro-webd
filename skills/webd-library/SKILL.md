@@ -144,6 +144,7 @@ node "<스킬 폴더>/scripts/library.mjs" edit <id> [--port <번호>] [--no-ope
 - **출력**: `<이름>.png`·`<이름>@2x.png`마다 같은 이름의 `.json`. JSON은 Aseprite 호환(`frames`, `meta.slices[].keys[].center`)이고 `meta.webd.engines`에 Unity(`border` L·B·R·T, Sliced/Tiled), Godot(`patch_margin_*`, `axis_stretch_*`), CSS `border-image` 값이 들어 있습니다. 같은 이름의 이전 파일은 `.previous/`로 옮깁니다.
 - 저장하지 않은 CSS 변경도 화면 그대로 내보냅니다(패널에 표시). 설정은 `<id>/export.json`에 남아 다음에 그대로 다시 내보낼 수 있습니다.
 - 에이전트가 대신 내보낼 때는 편집기를 열어 사용자와 같이 결과·늘려 보기를 확인한 뒤 내보내기를 누르고, 쓴 폴더와 파일 이름, 경고를 보고합니다.
+- **묶음 시트**: 목록에서 카드의 "묶음"을 체크하고 이름·최대 크기(기본 2048)·2의 거듭제곱·투명 여백 다듬기를 정해 저장·미리보기·내보내기 합니다. 각 컴포넌트는 자기 `export.json` 그대로 찍히므로, 묶기 전에 컴포넌트마다 내보내기 설정(대상·9-slice·상태)이 맞는지 확인합니다. 배치는 MaxRects, 9·3-slice는 다듬지 않습니다. 정의는 `<라이브러리>/.atlases/<이름>.json`, 출력은 `<내보내기 루트>/atlases/<이름>/`. 명령줄: `node "<스킬 폴더>/scripts/library.mjs" atlas <이름> [--members id,id] [--max 2048] [--pot] [--no-trim] [--scales 1,2]`, 목록 `atlas --list`.
 
 ## 다시 쓰기
 

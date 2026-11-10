@@ -77,3 +77,78 @@ export function packSheet(frames, { type = "rows", columns = "auto", padding = 0
   });
   return { image: sheet, cells, grid: { columns: cols, rows, cellW, cellH } };
 }
+
+/**
+ * MaxRects(Best Short Side Fit) 배치. 사각형들을 maxW×maxH 판에 빈틈을 채우며 놓고, 다 안 들어가면 다음 판으로 넘긴다.
+ * 회전하지 않는다(엔진에서 UI를 돌려 그리는 일이 드물고, 9-slice 인셋이 꼬이지 않게).
+ * @param {{ w, h }[]} sizes  각 칸 크기(간격·돌출 포함)
+ * @param {{ maxW: number, maxH: number }} o
+ * @returns {{ w, h, items: { i, x, y }[] }[]}  판마다 실제로 쓴 너비·높이와 놓인 자리
+ */
+export function maxRects(sizes, { maxW, maxH }) {
+  sizes.forEach((s, i) => {
+    if (s.w > maxW || s.h > maxH) { const e = new Error(`${i + 1}번째 칸(${s.w}×${s.h})이 최대 크기 ${maxW}×${maxH}보다 큽니다.`); e.status = 422; throw e; }
+  });
+  // 큰 것부터: 긴 변 → 넓이 순. 같으면 원래 순서
+  let rest = sizes.map((s, i) => ({ ...s, i })).sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h) || b.w * b.h - a.w * a.h || a.i - b.i);
+  const pages = [];
+  while (rest.length) {
+    let free = [{ x: 0, y: 0, w: maxW, h: maxH }];
+    const placed = [], left = [];
+    for (const r of rest) {
+      let best = null;
+      for (const f of free) {
+        if (r.w > f.w || r.h > f.h) continue;
+        const shortSide = Math.min(f.w - r.w, f.h - r.h), longSide = Math.max(f.w - r.w, f.h - r.h);
+        if (!best || shortSide < best.s || (shortSide === best.s && longSide < best.l) || (shortSide === best.s && longSide === best.l && (f.y < best.y || (f.y === best.y && f.x < best.x))))
+          best = { x: f.x, y: f.y, s: shortSide, l: longSide };
+      }
+      if (!best) { left.push(r); continue; }
+      const p = { x: best.x, y: best.y, w: r.w, h: r.h };
+      placed.push({ i: r.i, x: p.x, y: p.y, w: r.w, h: r.h });
+      free = splitFree(free, p);
+    }
+    if (!placed.length) throw new Error("배치하지 못했습니다.");   // 위에서 크기를 확인해 생기지 않음
+    pages.push({ w: Math.max(...placed.map((p) => p.x + p.w)), h: Math.max(...placed.map((p) => p.y + p.h)), items: placed.map(({ i, x, y }) => ({ i, x, y })) });
+    rest = left;
+  }
+  return pages;
+}
+
+function splitFree(free, p) {
+  const out = [];
+  for (const f of free) {
+    if (p.x >= f.x + f.w || p.x + p.w <= f.x || p.y >= f.y + f.h || p.y + p.h <= f.y) { out.push(f); continue; }
+    if (p.x > f.x) out.push({ x: f.x, y: f.y, w: p.x - f.x, h: f.h });
+    if (p.x + p.w < f.x + f.w) out.push({ x: p.x + p.w, y: f.y, w: f.x + f.w - (p.x + p.w), h: f.h });
+    if (p.y > f.y) out.push({ x: f.x, y: f.y, w: f.w, h: p.y - f.y });
+    if (p.y + p.h < f.y + f.h) out.push({ x: f.x, y: p.y + p.h, w: f.w, h: f.y + f.h - (p.y + p.h) });
+  }
+  // 다른 빈 사각형 안에 들어가는 것은 버림
+  return out.filter((a, i) => !out.some((b, j) => j !== i && a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h && (j < i || a.w !== b.w || a.h !== b.h || a.x !== b.x || a.y !== b.y)));
+}
+
+/** n 이상인 가장 작은 2의 거듭제곱 */
+export function nextPow2(n) { let p = 1; while (p < n) p *= 2; return p; }
+
+/**
+ * 한 판에 다 들어가는 가장 작은 판을 찾는다(넓이가 작은 순, 같으면 정사각형에 가까운 순).
+ * 후보 변은 2의 거듭제곱과 그 1.5배(pot면 2의 거듭제곱만). 최대 크기에도 안 들어가면 최대 크기로 여러 판.
+ * @param {{ w, h }[]} sizes
+ * @param {{ max: number, pot?: boolean, pad?: number }} o  pad: 칸 크기에 이미 더한 간격(판 크기 비교에서 뺌)
+ */
+export function packBest(sizes, { max, pot = false, pad = 0 }) {
+  const area = sizes.reduce((a, s) => a + s.w * s.h, 0);
+  const minW = Math.max(...sizes.map((s) => s.w)) - pad, minH = Math.max(...sizes.map((s) => s.h)) - pad;
+  const sides = [];
+  for (let p = 16; p <= max; p *= 2) { sides.push(p); if (!pot && p * 1.5 <= max) sides.push(p * 1.5); }
+  if (!sides.includes(max)) sides.push(max);
+  const pairs = [];
+  for (const w of sides) for (const h of sides) if (w >= minW && h >= minH && w * h >= area * 0.9) pairs.push({ w, h });
+  pairs.sort((a, b) => a.w * a.h - b.w * b.h || Math.abs(a.w - a.h) - Math.abs(b.w - b.h) || b.w - a.w);
+  for (const { w, h } of pairs) {
+    const pages = maxRects(sizes, { maxW: w + pad, maxH: h + pad });
+    if (pages.length === 1) return pages;
+  }
+  return maxRects(sizes, { maxW: max + pad, maxH: max + pad });
+}

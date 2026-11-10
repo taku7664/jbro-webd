@@ -133,6 +133,31 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
   .toast.on { opacity: 1; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+  /* 묶음 시트(라이브러리 서버에서만) */
+  .atlas { margin-top: 16px; padding: 14px 18px; display: grid; gap: 10px; }
+  .atlas h2 { margin: 0; font-size: 15px; font-weight: 700; }
+  .atlas h2 small { font-size: 12px; font-weight: 400; color: var(--muted); margin-left: 8px; }
+  .atlas-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; }
+  .atlas-row label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
+  .atlas-row label.chk { display: flex; align-items: center; gap: 6px; padding-bottom: 6px; }
+  .atlas-row .count { padding-bottom: 7px; font-size: 13px; color: var(--muted); }
+  .atlas-row button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; }
+  .atlas-row button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .atlas-row button:disabled { opacity: .5; cursor: progress; }
+  .atlas-saved { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
+  .atlas-saved:empty { display: none; }
+  .atlas-saved button { font: inherit; font-size: 12px; border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 999px; padding: 3px 10px; cursor: pointer; }
+  .atlas-saved button[aria-current="true"] { border-color: var(--accent); color: var(--accent); }
+  .atlas-out { display: grid; gap: 8px; font-size: 13px; }
+  .atlas-out:empty { display: none; }
+  .atlas-out figure { margin: 0; display: grid; gap: 4px; }
+  .atlas-out .sheet { max-width: 100%; max-height: 520px; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+  .atlas-out img { display: block; image-rendering: pixelated; }
+  .atlas-out figcaption, .atlas-out .files { margin: 0; color: var(--muted); font-size: 12px; font-family: var(--mono); overflow-wrap: anywhere; }
+  .atlas-out ul.warn { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12px; }
+  .pick { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .pick input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+
   @media (max-width: 900px) {
     .bar { grid-template-columns: 1fr 1fr; }
     .bar .q, .bar .period-wrap { grid-column: 1 / -1; }
@@ -177,7 +202,23 @@ ${server ? "" : `  <p class="serve-note ui-surface" id="serve-note">파일로 �
       <button type="button" id="reset">필터 초기화</button>
     </div>
   </div>
-  <main id="list"></main>
+${server ? `  <section class="atlas ui-surface" id="atlas" aria-labelledby="atlas-title">
+    <h2 id="atlas-title">묶음 시트<small>카드의 "묶음"을 체크한 컴포넌트를 각자의 내보내기 설정대로 찍어 한 장에 모읍니다</small></h2>
+    <div class="atlas-row">
+      <label>이름<input id="atlas-name" class="ui-control" value="묶음" autocomplete="off" spellcheck="false"></label>
+      <label>최대 크기<select id="atlas-max" class="ui-control"><option>512</option><option>1024</option><option selected>2048</option><option>4096</option></select></label>
+      <label class="chk"><input type="checkbox" id="atlas-pot">2의 거듭제곱</label>
+      <label class="chk"><input type="checkbox" id="atlas-trim" checked>투명 여백 다듬기</label>
+      <span class="count" id="atlas-count" aria-live="polite">0개 선택</span>
+      <button type="button" class="ui-control" id="atlas-save">묶음 저장</button>
+      <button type="button" class="ui-control" id="atlas-preview">미리보기</button>
+      <button type="button" class="ui-control primary" id="atlas-export">내보내기</button>
+      <button type="button" class="ui-control" id="atlas-clear">선택 비우기</button>
+    </div>
+    <ul class="atlas-saved" id="atlas-saved" aria-label="저장한 묶음"></ul>
+    <div class="atlas-out" id="atlas-out" aria-live="polite"></div>
+  </section>
+` : ""}  <main id="list"></main>
 </div>
 <div class="toast" id="toast" role="status"></div>
 
@@ -266,6 +307,7 @@ ${server ? "" : `  <p class="serve-note ui-surface" id="serve-note">파일로 �
       el("button", { type: "button", class: "ui-control", text: "ID 복사", onclick: () => copy(d.id, "ID를 복사했습니다: " + d.id) })];
     const actions = SERVER
       ? el("div", { class: "actions" },
+          pickBox(d),
           el("a", { class: "primary ui-primary ui-control", href: editHref(d.id), text: "편집" }),
           el("a", { class: "ui-control", href: editHref(d.id) + "#export", text: "내보내기" }),
           ...copyButtons,
@@ -320,6 +362,88 @@ ${server ? "" : `  <p class="serve-note ui-surface" id="serve-note">파일로 �
     document.body.append(ta); ta.select();
     const ok = document.execCommand && document.execCommand("copy"); ta.remove();
     toast(ok ? msg : "복사하지 못했습니다. 열기에서 소스를 확인하세요.");
+  }
+
+  // ---------- 묶음 시트(라이브러리 서버에서만) ----------
+  const picked = [];   // 체크한 순서 = 묶음 안 순서
+  function pickBox(d) {
+    const box = el("input", { type: "checkbox", "data-id": d.id, "aria-label": d.name + " 묶음에 넣기" });
+    box.checked = picked.includes(d.id);
+    box.addEventListener("change", () => {
+      const i = picked.indexOf(d.id);
+      if (box.checked && i < 0) picked.push(d.id);
+      if (!box.checked && i >= 0) picked.splice(i, 1);
+      atlasCount();
+    });
+    return el("label", { class: "pick", title: "묶음 시트에 넣기" }, box, "묶음");
+  }
+  function atlasCount() { if ($("atlas-count")) $("atlas-count").textContent = picked.length + "개 선택"; }
+  let atlases = [];
+  function atlasBody() {
+    const name = $("atlas-name").value.trim() || "묶음";
+    const prev = atlases.find((x) => x.name === name);
+    const keep = prev ? { padding: prev.padding, extrude: prev.extrude, scales: prev.scales, data: prev.data, dir: prev.dir } : {};
+    return Object.assign(keep, { name, members: picked.slice(), maxSize: Number($("atlas-max").value), pot: $("atlas-pot").checked, trim: $("atlas-trim").checked });
+  }
+  async function atlasCall(path, body) {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({ error: r.statusText }));
+    if (!r.ok) throw new Error(j.error || ("실패 (" + r.status + ")"));
+    return j;
+  }
+  const atlasUrl = (name) => "/atlas/" + encodeURIComponent(name);
+  async function loadAtlases(current) {
+    try { const j = await (await fetch("/atlas/")).json(); atlases = j.atlases || []; } catch { atlases = []; }
+    const ul = $("atlas-saved"); ul.replaceChildren();
+    for (const a of atlases) {
+      const tip = a.members.length + "개 · 최대 " + a.maxSize + (a.lastExport ? " · 마지막 내보내기 " + stamp(a.lastExport.at) : " · 아직 안 내보냄");
+      ul.append(el("li", {}, el("button", { type: "button", "aria-current": String(a.name === current), title: tip, text: a.name + " · " + a.members.length + "개", onclick: () => useAtlas(a) })));
+    }
+  }
+  function useAtlas(a) {
+    $("atlas-name").value = a.name; $("atlas-max").value = String(a.maxSize); $("atlas-pot").checked = a.pot; $("atlas-trim").checked = a.trim !== false;
+    picked.splice(0, picked.length, ...a.members.filter((id) => DATA.some((d) => d.id === id)));
+    atlasCount(); update(); loadAtlases(a.name);
+    toast("묶음 “" + a.name + "”을 불러왔습니다: " + picked.length + "개");
+  }
+  function busy(on, msg) {
+    for (const id of ["atlas-save", "atlas-preview", "atlas-export"]) $(id).disabled = on;
+    if (on) $("atlas-out").replaceChildren(el("p", { text: msg }));
+  }
+  function showResult(j, wrote, name) {
+    const out = $("atlas-out"); out.replaceChildren();
+    for (const p of j.previews) {
+      const img = el("img", { src: p.url, alt: p.png, width: String(p.size.w), height: String(p.size.h) });
+      const cap = p.png + " · " + p.size.w + "×" + p.size.h + " · 칸 " + p.frames + "개 · 컴포넌트 " + p.members.length + "개";
+      out.append(el("figure", {}, el("div", { class: "sheet ui-checkerboard" }, img), el("figcaption", { text: cap })));
+    }
+    if (wrote) {
+      out.append(el("p", { class: "files", text: "→ " + j.dir }), el("p", { class: "files", text: j.files.map((f) => f.name).join("  ") }),
+        el("div", { class: "atlas-row" }, el("button", { type: "button", class: "ui-control", text: "폴더 열기", onclick: () => atlasCall(atlasUrl(name) + "/reveal", {}).catch((e) => toast(e.message)) })));
+    } else out.append(el("p", { class: "files", text: "미리보기는 가장 큰 배율 한 가지만 찍습니다. 내보내기는 모든 배율을 씁니다." }));
+    if (j.warnings && j.warnings.length) out.append(el("ul", { class: "warn" }, ...j.warnings.map((w) => el("li", { text: w }))));
+  }
+  async function atlasRun(kind) {
+    const body = atlasBody();
+    if (!picked.length) { toast("카드의 “묶음”을 먼저 체크하세요."); return; }
+    busy(true, kind === "save" ? "저장 중…" : "렌더 중… 컴포넌트 " + picked.length + "개(상태·프레임이 많으면 수십 초 걸립니다)");
+    try {
+      if (kind === "preview") { showResult(await atlasCall(atlasUrl(body.name) + "/export", { atlas: body, write: false }), false, body.name); return; }
+      const saved = await atlasCall(atlasUrl(body.name), { atlas: body });
+      $("atlas-name").value = saved.atlas.name;
+      saved.warnings.forEach((w) => toast(w));
+      if (kind === "save") $("atlas-out").replaceChildren(el("p", { text: "묶음 “" + saved.atlas.name + "”을 저장했습니다(" + saved.atlas.members.length + "개)." }));
+      else showResult(await atlasCall(atlasUrl(saved.atlas.name) + "/export", { write: true }), true, saved.atlas.name);
+      loadAtlases(saved.atlas.name);
+    } catch (e) { $("atlas-out").replaceChildren(el("p", { text: "실패: " + e.message })); }
+    finally { busy(false); }
+  }
+  if (SERVER && $("atlas")) {
+    $("atlas-save").addEventListener("click", () => atlasRun("save"));
+    $("atlas-preview").addEventListener("click", () => atlasRun("preview"));
+    $("atlas-export").addEventListener("click", () => atlasRun("export"));
+    $("atlas-clear").addEventListener("click", () => { picked.length = 0; atlasCount(); update(); });
+    loadAtlases();
   }
 
   for (const k in els) els[k].addEventListener(k === "q" ? "input" : "change", update);

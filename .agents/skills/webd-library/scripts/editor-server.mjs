@@ -27,6 +27,11 @@
 //   POST /api/<id>/export-spec     { spec } → <id>/export.json 저장
 //   POST /api/<id>/export          { spec, html?, write } → write면 폴더에 PNG·JSON을 쓰고, 아니면 미리보기(data URL)만
 //   POST /api/<id>/reveal          내보낸 폴더를 파일 탐색기로 연다
+//   GET  /atlas/                   묶음 시트 목록 { atlases, maxSizes }  (라이브러리 모드만)
+//   POST /atlas/<이름>             { atlas } → <라이브러리>/.atlases/<이름>.json 저장
+//   POST /atlas/<이름>/remove      묶음 정의 지우기(내보낸 파일은 그대로)
+//   POST /atlas/<이름>/export      { atlas?, write } → write면 폴더에 쓰고, 아니면 미리보기(data URL)만
+//   POST /atlas/<이름>/reveal      묶음 출력 폴더 열기
 
 import { createServer } from "node:http";
 import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, watch, statSync } from "node:fs";
@@ -144,6 +149,61 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
         }
         if (rest.some((p) => p.startsWith("."))) return send(res, 404, "없음");
         return sendInside(res, join(lib, id), rest.join("/"));
+      }
+      if (parts[0] === "atlas") {
+        if (only) return send(res, 404, "이 서버는 항목 하나만 엽니다.");
+        if (!authed()) return send(res, 403, "토큰이 없거나 다릅니다.");
+        if (req.method === "POST") {
+          const origin = req.headers.origin;
+          if (origin && !okHosts.some((h) => origin === `http://${h}`)) return send(res, 403, "다른 출처");
+        }
+        const A = await import("./export/atlas.mjs");
+        const withDir = (a) => ({ ...a, outDir: A.atlasOutputDir(a, lib) });
+        if (req.method === "GET" && parts.length === 1) return json(res, 200, { atlases: A.listAtlases(lib).map(withDir), maxSizes: A.MAX_SIZES });
+        const name = parts[1], action = parts[2] ?? "";
+        if (!name || name.startsWith(".") || /[\/]/.test(name)) return send(res, 404, "없음");
+        const load = (input) => {
+          const prev = A.readAtlas(lib, name);
+          const { atlas, warnings } = A.normalizeAtlas({ ...(input ?? prev ?? {}), name }, { exists });
+          if (prev?.lastExport && !atlas.lastExport) atlas.lastExport = prev.lastExport;
+          return { atlas, warnings, prev };
+        };
+        if (req.method === "POST" && action === "") {
+          const body = await readJson(req);
+          const { atlas, warnings } = load(body?.atlas ?? {});
+          A.writeAtlas(lib, atlas);
+          return json(res, 200, { atlas: withDir(atlas), warnings });
+        }
+        if (req.method === "POST" && action === "remove") { A.removeAtlas(lib, name); return json(res, 200, { ok: true }); }
+        if (req.method === "POST" && action === "reveal") {
+          const { atlas } = load(null);
+          const out = A.atlasOutputDir(atlas, lib);
+          if (!existsSync(out)) return json(res, 404, { error: "아직 내보낸 파일이 없습니다.", dir: out });
+          revealFolder(out);
+          return json(res, 200, { ok: true, dir: out });
+        }
+        if (req.method === "POST" && action === "export") {
+          const body = await readJson(req);
+          const { atlas, warnings: aw, prev } = load(body?.atlas ?? null);
+          if (!prev && !body?.atlas) return json(res, 404, { error: "없는 묶음입니다." });
+          const preview = !body?.write;
+          const { writeExport } = await import("./export/run.mjs");
+          const cap = await getCapturer();
+          const run = await A.buildAtlas({
+            capture: cap.capture, atlas, scales: preview ? [atlas.scales[atlas.scales.length - 1]] : atlas.scales,
+            member: (mid) => ({ url: `http://127.0.0.1:${addr.port}/lib/${encodeURIComponent(mid)}/component.html`, spec: A.memberSpec(lib, mid), meta: JSON.parse(readFileSync(join(lib, mid, "meta.json"), "utf8")) }),
+          });
+          const warnings = [...aw, ...run.warnings];
+          const pngData = (n) => "data:image/png;base64," + run.files.find((f) => f.name === n).bytes.toString("base64");
+          const previews = run.previews.map((p) => ({ ...p, url: pngData(p.png) }));
+          if (preview) return json(res, 200, { preview: true, previews, warnings, files: run.files.map(fileInfo) });
+          const out = A.atlasOutputDir(atlas, lib);
+          writeExport(out, run.files);
+          const lastExport = { at: localIso(), dir: out, files: run.files.map((f) => f.name) };
+          A.writeAtlas(lib, { ...atlas, lastExport });
+          return json(res, 200, { preview: false, dir: out, previews, warnings, files: run.files.map(fileInfo), lastExport });
+        }
+        return send(res, 404, "없음");
       }
       if (parts[0] === "api" && parts.length >= 2) {
         const id = parts[1];
