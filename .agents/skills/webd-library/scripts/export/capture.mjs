@@ -8,6 +8,7 @@ import { decodePng } from "./png.mjs";
 import { alphaBounds, crop } from "./pack.mjs";
 import { findBrowser, launch, connect } from "../../../webd/scripts/render-check.mjs";
 import { applyWebdState, rewriteStateSelectors } from "../../editor/states.mjs";
+import { animInfo, seekAnimations, frameTimes } from "../../editor/anim.mjs";
 
 export const BLEED = 64;          // ink 범위에서 상자 밖으로 더 찍는 폭(CSS px): 그림자·광채용
 export const CENTER_MIN = 4;      // 최소 크기 9-slice의 가운데 폭(CSS px)
@@ -17,7 +18,7 @@ export class CaptureError extends Error {
 }
 
 /** 브라우저 안에서 도는 준비 함수. 바깥 변수를 쓰지 않는다(상태 함수는 helpers로 받음: editor/states.mjs). */
-async function preparePage(arg, applyState, rewriteCss) {
+async function preparePage(arg, applyState, rewriteCss, getAnimInfo) {
   const warnings = [];
   await document.fonts.ready;
   for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = 0; } catch {} }
@@ -37,6 +38,10 @@ async function preparePage(arg, applyState, rewriteCss) {
     applyState(document, arg.state, target);
     if (!target.isConnected) return { error: "상태를 걸었더니 대상 요소가 사라졌습니다." };
   }
+  // 상태를 걸며 새로 시작한 애니메이션도 0초에 세워 둔다(프레임은 밖에서 시각을 옮겨 가며 찍는다)
+  await new Promise((r) => requestAnimationFrame(r));
+  for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = 0; } catch {} }
+  const anim = getAnimInfo(document);
   target.setAttribute("data-webd-target", "");
   let css = "";
   if (arg.transparent) css += "html,body{background:transparent!important;background-color:transparent!important}";
@@ -102,9 +107,17 @@ async function preparePage(arg, applyState, rewriteCss) {
   return {
     rect: { x: r.x + scrollX, y: r.y + scrollY, w: r.width, h: r.height },
     doc: { w: Math.max(doc.scrollWidth, innerWidth), h: Math.max(doc.scrollHeight, innerHeight) },
+    anim,
     label: target.tagName.toLowerCase() + (target.id ? "#" + target.id : "") + (target.classList.length ? "." + [...target.classList].slice(0, 3).join(".") : ""),
     warnings,
   };
+}
+
+/** 브라우저 안: 애니메이션을 t(ms)로 옮기고 그려질 때까지 기다린다 */
+async function seekPage(t, seek) {
+  seek(document, t);
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return true;
 }
 
 export function createCapturer({ browserPath } = {}) {
@@ -133,7 +146,7 @@ export function createCapturer({ browserPath } = {}) {
    * @param {{ url: string, spec: object, scale: number, viewport: { width, height }, state?: object[] }} job  state: 걸 상태 조각(editor/states.mjs)
    * @returns {Promise<{ image, box: {x,y,w,h}, insets: {l,t,r,b}|null, cssBox: {w,h}, label, warnings: string[] }>}
    */
-  async function captureOnce({ url, spec, scale, viewport, state = null }) {
+  async function captureOnce({ url, spec, scale, viewport, state = null, animate = null }) {
     const { cdp } = await open();
     const vw = Math.max(16, Math.round(viewport?.width || 1200)), vh = Math.max(16, Math.round(viewport?.height || 720));
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: vh, deviceScaleFactor: scale, mobile: false });
@@ -159,7 +172,7 @@ export function createCapturer({ browserPath } = {}) {
     const prep = await cdp.evaluate(preparePage, {
       target: spec.target, transparent: spec.background === "transparent", frameOnly: slice && spec.slice.frameOnly,
       resize, rootBox: spec.target.kind === "root" && !resize ? { w: vw, h: vh } : null, state,
-    }, applyWebdState, rewriteStateSelectors);
+    }, applyWebdState, rewriteStateSelectors, animInfo);
     if (prep.error) throw new CaptureError(prep.error, 409);
     const box = prep.rect;
     if (box.w < 1 || box.h < 1) throw new CaptureError(`대상(${prep.label})의 크기가 0입니다. 화면에 보이는 요소를 고르세요.`, 409);
@@ -169,20 +182,41 @@ export function createCapturer({ browserPath } = {}) {
     const clip = { x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad) };
     clip.width = Math.min(prep.doc.w + pad, box.x + box.w + pad) - clip.x;
     clip.height = Math.min(prep.doc.h + pad, box.y + box.h + pad) - clip.y;
-    const shot = await cdp.send("Page.captureScreenshot", { format: "png", clip: { ...clip, scale: 1 }, captureBeyondViewport: true, fromSurface: true });
-    let image = decodePng(Buffer.from(shot.data, "base64"));
-    const ratio = image.width / clip.width;   // 실제 픽셀 배율(= scale이어야 함)
+    const warnings = [...pre, ...prep.warnings];
+    // 프레임 시각: CSS 애니메이션이 돌고 있고 내보내기에서 켰으면 fps 간격으로, 아니면 0초 한 장
+    let times = [0];
+    if (animate?.enabled && prep.anim?.length > 0) {
+      const ft = frameTimes(prep.anim.length, animate.fps, animate.maxFrames);
+      times = ft.times;
+      if (ft.clipped) warnings.push(`애니메이션이 길어 앞쪽 ${times.length}프레임만 찍었습니다(전체 ${ft.total}프레임, ${Math.round(prep.anim.length)}ms). fps를 낮추거나 최대 프레임을 늘리세요.`);
+      if (prep.anim.mixed) warnings.push("주기가 다른 반복 애니메이션이 섞여 있어 마지막 프레임과 첫 프레임이 매끄럽게 이어지지 않을 수 있습니다(가장 긴 주기로 찍음).");
+    }
+    const raws = [];
+    for (const time of times) {
+      if (times.length > 1) await cdp.evaluate(seekPage, time, seekAnimations);
+      const shot = await cdp.send("Page.captureScreenshot", { format: "png", clip: { ...clip, scale: 1 }, captureBeyondViewport: true, fromSurface: true });
+      raws.push(decodePng(Buffer.from(shot.data, "base64")));
+    }
+    let images = raws;
+    const ratio = raws[0].width / clip.width;   // 실제 픽셀 배율(= scale이어야 함)
     // 이미지 좌표의 상자
     let bx = { x: Math.round((box.x - clip.x) * ratio), y: Math.round((box.y - clip.y) * ratio), w: Math.round(box.w * ratio), h: Math.round(box.h * ratio) };
-    const warnings = [...pre, ...prep.warnings];
     if (Math.abs(ratio - scale) > 0.01) warnings.push(`캡처 배율이 ${ratio.toFixed(2)}배로 나왔습니다(요청 ${scale}배).`);
 
     if (ink) {
-      const b = alphaBounds(image);
-      if (!b) throw new CaptureError("찍은 결과가 모두 투명합니다. 대상이 보이는지, '틀만 찍기'가 필요한 내용을 숨기지 않았는지 확인하세요.", 409);
-      image = crop(image, b);
-      bx = { x: bx.x - b.x, y: bx.y - b.y, w: bx.w, h: bx.h };
+      // 프레임마다 그려진 범위를 합쳐(합집합) 모든 프레임을 같은 크기로 자른다(엔진에서 프레임이 흔들리지 않게)
+      let u = null;
+      for (const im of raws) {
+        const bb = alphaBounds(im); if (!bb) continue;
+        if (!u) { u = { ...bb }; continue; }
+        const x = Math.min(u.x, bb.x), y = Math.min(u.y, bb.y);
+        u = { x, y, w: Math.max(u.x + u.w, bb.x + bb.w) - x, h: Math.max(u.y + u.h, bb.y + bb.h) - y };
+      }
+      if (!u) throw new CaptureError("찍은 결과가 모두 투명합니다. 대상이 보이는지, '틀만 찍기'가 필요한 내용을 숨기지 않았는지 확인하세요.", 409);
+      images = raws.map((im) => crop(im, u));
+      bx = { x: bx.x - u.x, y: bx.y - u.y, w: bx.w, h: bx.h };
     }
+    const image = images[0];
 
     let insets = null;
     if (slice) {
@@ -198,7 +232,7 @@ export function createCapturer({ browserPath } = {}) {
       if (insets.l + insets.r >= image.width && m !== "three-v") warnings.push(`좌우 인셋(${insets.l}+${insets.r}px)이 이미지 폭(${image.width}px) 이상이라 가운데가 없습니다.`);
       if (insets.t + insets.b >= image.height && m !== "three-h") warnings.push(`상하 인셋(${insets.t}+${insets.b}px)이 이미지 높이(${image.height}px) 이상이라 가운데가 없습니다.`);
     }
-    return { image, box: bx, insets, cssBox: { w: box.w, h: box.h }, label: prep.label, warnings };
+    return { image, frames: images.map((im, i) => ({ image: im, time: times[i] })), box: bx, insets, cssBox: { w: box.w, h: box.h }, label: prep.label, warnings, anim: prep.anim };
   }
 
   function capture(job) {

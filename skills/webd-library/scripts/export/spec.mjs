@@ -6,6 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export const SLICE_MODES = ["none", "nine", "three-h", "three-v"];
 export const SCALES = [1, 2, 3, 4];
+export const FPS = [8, 12, 24, 30, 60];
 const NAME_BAD = /[\\/:*?"<>|\u0000-\u001f]+/g;
 
 /** 파일 이름으로 쓸 수 있게 다듬는다. 한글은 남긴다. */
@@ -28,7 +29,8 @@ export function defaultSpec(id) {
     slice: { mode: "none", insets: { l: 0, t: 0, r: 0, b: 0 }, fill: "stretch", frameOnly: true, size: "compact" },
     // 기본 상태(normal)는 늘 첫 프레임. 여기에는 편집기가 CSS에서 찾은 상태가 들어간다(include: false면 뺌).
     states: [],
-    animation: null,
+    // CSS 애니메이션이 돌고 있으면 프레임으로 찍는다(상태마다 길이를 페이지에서 잼). 없으면 한 장.
+    animation: { enabled: true, fps: 24, maxFrames: 120 },
     output: { dir: "", layout: "sheet", sheet: { type: "rows", columns: "auto", padding: 2, extrude: 0 }, data: "aseprite-hash" },
   };
 }
@@ -69,8 +71,12 @@ export function normalizeSpec(input, id) {
     if (!need) warnings.push("인셋이 모두 0이면 모서리가 고정되지 않습니다. 인셋을 정하거나 'CSS에서 추정'을 누르세요.");
   }
   out.states = normalizeStates(s.states);
-  // 3단계 항목
-  if (s.animation) warnings.push("애니메이션 내보내기는 아직 지원하지 않아 한 프레임만 내보냅니다.");
+  const an = s.animation;
+  if (an && typeof an === "object") {
+    out.animation.enabled = an.enabled !== false;
+    out.animation.fps = pick(Number(an.fps), FPS, d.animation.fps);
+    out.animation.maxFrames = int(an.maxFrames, 1, 240, d.animation.maxFrames);
+  } else if (an === false) out.animation.enabled = false;
   const o = s.output ?? {};
   out.output.dir = typeof o.dir === "string" ? o.dir.trim().slice(0, 1024) : "";
   if (out.output.dir && !isAbsolute(out.output.dir)) throw specError("내보낼 폴더는 전체 경로로 적어 주세요(예: F:\\AI\\WebD\\export\\버튼).");

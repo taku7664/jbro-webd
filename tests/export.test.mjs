@@ -86,16 +86,20 @@ test("사양: 기본값, 잘못된 값 거름, 3-slice는 반대 축 인셋 0", 
   assert.ok(normalizeSpec({ slice: { mode: "nine" } }, "x").warnings.some((w) => /인셋이 모두 0/.test(w)));
 });
 
-test("사양: 상태는 기본 + 켠 상태로 펼치고, 모양이 틀린 항목·옛 형식은 버린다. 애니메이션은 아직 경고", () => {
+test("사양: 상태는 기본 + 켠 상태로 펼치고, 모양이 틀린 항목·옛 형식은 버린다. 애니메이션 설정 검증", () => {
   const hover = { key: "hover", label: "호버", tokens: [{ kind: "pseudo", name: "hover", owners: [".btn"] }] };
   const off = { key: "disabled", label: "비활성", include: false, tokens: [{ kind: "pseudo", name: "disabled", owners: [".btn"] }] };
   const { spec, warnings } = normalizeSpec({ name: "btn", states: [{ name: "normal" }, hover, off,
     { key: "bad key!", tokens: [] }, { key: "x", tokens: [{ kind: "eval", name: "x", owners: ["a"] }] }, { key: "y", tokens: [{ kind: "class", name: "y", owners: [] }] }],
-    animation: { fps: 24 } }, "x");
+    animation: { fps: 30, maxFrames: 999 } }, "x");
   assert.deepEqual(spec.states.map((s) => s.key), ["hover", "disabled"]);
   const frames = expandFrames(spec);
   assert.deepEqual(frames.map((f) => [f.state, f.filename]), [["normal", "btn_normal"], ["hover", "btn_hover"]]);
-  assert.equal(warnings.length, 1);
+  assert.equal(warnings.length, 0);
+  assert.deepEqual(spec.animation, { enabled: true, fps: 30, maxFrames: 240 });
+  assert.deepEqual(normalizeSpec({ animation: { fps: 7 } }, "x").spec.animation.fps, 24, "고를 수 없는 fps는 기본값");
+  assert.equal(normalizeSpec({ animation: false }, "x").spec.animation.enabled, false);
+  assert.equal(normalizeSpec({ animation: null }, "x").spec.animation.enabled, true, "옛 export.json(null)은 기본값");
   assert.equal(expandFrames(normalizeSpec({ name: "btn" }, "x").spec)[0].filename, "btn", "상태가 없으면 이름에 꼬리 없음");
 });
 
@@ -285,7 +289,7 @@ test("내보내기: 상태별로 다시 렌더해 시트 한 장 + frameTags, �
       spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "box", states: states.slice(0, 1) }, write: false } });
     assert.equal(pv.status, 200, pv.text);
     assert.deepEqual(pv.json.previews[0].frames.map((f) => f.key), ["normal", "hover"]);
-    assert.match(pv.json.previews[0].frames[1].url, /^data:image\/png;base64,/);
+    assert.match(pv.json.previews[0].frames[1].urls[0], /^data:image\/png;base64,/);
     // 9-slice 최소 크기: transform: scale()이 걸린 상태(누름)도 같은 크기로 줄인다
     const nine = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
       spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "box", slice: { mode: "nine", insets: { l: 6, t: 6, r: 6, b: 6 } },
@@ -293,6 +297,51 @@ test("내보내기: 상태별로 다시 렌더해 시트 한 장 + frameTags, �
     assert.equal(nine.status, 200, nine.text);
     assert.ok(!nine.json.warnings.some((w) => /줄여지지 않아|크기가 기본과 다릅니다/.test(w)), nine.json.warnings.join(" / "));
     assert.deepEqual(nine.json.previews[0].frames.map((f) => [f.key, f.size.w]), [["normal", 16], ["active", 16]]);
+  } finally { await srv.close(); }
+});
+
+const ANIM = `<!doctype html><html><head><style>
+html,body{margin:0;background:#202020}
+.dot{position:absolute;left:10px;top:10px;width:20px;height:20px;background:#ff0000;animation:blink .5s step-end infinite, grow .5s linear infinite}
+@keyframes blink{0%{background:#ff0000}25%{background:#00ff00}50%{background:#0000ff}75%,100%{background:#ffffff}}
+@keyframes grow{0%{box-shadow:0 0 0 0 #ff00ff}50%{box-shadow:0 0 0 6px #ff00ff}100%{box-shadow:0 0 0 0 #ff00ff}}
+.dot:hover{animation:none;background:#888888}
+.dot.is-spin{animation:blink .5s step-end infinite, grow .75s linear infinite}
+</style></head><body><div class="dot"></div></body></html>`;
+
+test("내보내기: CSS 애니메이션을 fps 간격 프레임으로 찍고, 프레임은 같은 크기(그림자 합집합), 상태마다 frameTags 범위", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {
+  const lib = join(mkdtempSync(join(work, "an-")), "library");
+  mkdirSync(lib, { recursive: true });
+  const src = join(work, `anim-${Date.now()}.html`); writeFileSync(src, ANIM);
+  const { meta } = save(lib, { file: src, name: "깜빡이", category: "other", viewport: "200x100" });
+  const srv = await startLibrary({ lib, token: "a".repeat(32) });
+  const T = { "x-webd-token": "a".repeat(32) };
+  const hover = { key: "hover", label: "호버", tokens: [{ kind: "pseudo", name: "hover", owners: [".dot"] }] };
+  try {
+    const r = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "dot", target: { kind: "element", path: [1, 0] }, bounds: "ink", animation: { fps: 8 }, states: [hover] }, write: true } });
+    assert.equal(r.status, 200, r.text);
+    const j = JSON.parse(readFileSync(join(r.json.dir, "dot-sheet.json"), "utf8"));
+    assert.deepEqual(Object.keys(j.frames), ["dot_normal_0", "dot_normal_1", "dot_normal_2", "dot_normal_3", "dot_hover"]);
+    assert.deepEqual(j.meta.frameTags, [{ name: "normal", from: 0, to: 3, direction: "forward" }, { name: "hover", from: 4, to: 4, direction: "forward" }]);
+    assert.equal(j.frames.dot_normal_1.duration, 125);
+    assert.deepEqual(j.meta.webd.animation, { fps: 8, frameDuration: 125, states: [{ key: "normal", frames: 4, length: 500, names: ["blink", "grow"] }] });
+    const sheet = decodePng(readFileSync(join(r.json.dir, "dot-sheet.png")));
+    const sizes = new Set(Object.values(j.frames).slice(0, 4).map((f) => `${f.frame.w}x${f.frame.h}`));
+    assert.deepEqual([...sizes], ["32x32"], "그림자가 가장 큰 프레임(6px) 기준으로 모두 같은 크기");
+    const mid = (name) => { const f = j.frames[name].frame; return px(sheet, f.x + f.w / 2, f.y + f.h / 2).slice(0, 3); };
+    assert.deepEqual(["dot_normal_0", "dot_normal_1", "dot_normal_2", "dot_normal_3"].map(mid), [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 255]]);
+    assert.deepEqual(mid("dot_hover"), [0x88, 0x88, 0x88], "호버에서는 애니메이션이 꺼져 한 장");
+    // 주기가 다른 반복(0.5초·0.75초)은 최소공배수(1.5초)로 찍어 끝과 처음이 이어지게
+    const mix = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "dot", target: { kind: "element", path: [1, 0] }, animation: { fps: 8 }, states: [{ key: "spin", label: "회전", tokens: [{ kind: "class", name: "is-spin", owners: [".dot"] }] }] }, write: false } });
+    assert.equal(mix.status, 200, mix.text);
+    assert.deepEqual(mix.json.previews[0].frames.map((f) => [f.key, f.urls.length]), [["normal", 4], ["spin", 12]]);
+    assert.ok(!mix.json.warnings.some((w) => /주기가 다른/.test(w)));
+    // 끄면 한 장
+    const off = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "dot", target: { kind: "element", path: [1, 0] }, animation: { enabled: false } }, write: false } });
+    assert.equal(off.json.previews[0].frames[0].urls.length, 1);
   } finally { await srv.close(); }
 });
 

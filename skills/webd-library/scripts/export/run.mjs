@@ -18,74 +18,83 @@ import { expandFrames, scaleSuffix } from "./spec.mjs";
  * @returns {Promise<{ files: { name, bytes: Buffer, kind: "png"|"json", scale, size? }[], previews: object[], warnings: string[] }>}
  */
 export async function buildExport({ capture, url, spec, viewport, source, warnings: specWarnings = [] }) {
-  const all = expandFrames(spec);
+  const all = expandFrames(spec);   // 상태 목록(기본 + 켠 상태). 애니메이션 프레임은 상태마다 페이지에서 길이를 재서 정한다
   const warnings = new Set(specWarnings);
   const files = [], previews = [];
-  let frames = all;   // 기본과 같아서 뺀 상태는 첫 배율에서 정하고 다른 배율에도 똑같이 적용한다
+  const animate = spec.animation?.enabled ? spec.animation : null;
+  const frameMs = animate ? Math.round(1000 / animate.fps) : 100;
+  let states = all;   // 기본과 같아서 뺀 상태는 첫 배율에서 정하고 다른 배율에도 똑같이 적용한다
   for (const scale of spec.scales) {
     const shots = [];
-    for (const f of frames) {
+    for (const st of states) {
       let shot;
-      try { shot = await capture({ url, spec, scale, viewport, state: f.tokens.length ? f.tokens : null }); }
+      try { shot = await capture({ url, spec, scale, viewport, state: st.tokens.length ? st.tokens : null, animate }); }
       catch (e) {
-        if (f.state === "normal" || !e.status || e.status >= 500) throw e;   // 기본 상태 실패·브라우저 문제는 전체 실패
-        warnings.add(`"${f.label}" 상태는 찍지 못해 뺐습니다: ${e.message}`);
+        if (st.state === "normal" || !e.status || e.status >= 500) throw e;   // 기본 상태 실패·브라우저 문제는 전체 실패
+        warnings.add(`"${st.label}" 상태는 찍지 못해 뺐습니다: ${e.message}`);
         continue;
       }
       shot.warnings.forEach((w) => warnings.add(w));
-      if (f.state !== "normal" && shots[0] && sameImage(shot.image, shots[0].shot.image)) {
-        warnings.add(`"${f.label}" 상태는 기본과 모습이 같아 뺐습니다.`);
+      if (st.state !== "normal" && shots[0] && sameFrames(shot.frames, shots[0].shot.frames)) {
+        warnings.add(`"${st.label}" 상태는 기본과 모습이 같아 뺐습니다.`);
         continue;
       }
-      shots.push({ ...f, shot });
+      shots.push({ ...st, shot });
     }
-    if (frames === all) frames = shots.map(({ shot, ...f }) => f);
+    if (states === all) states = shots.map(({ shot, ...st }) => st);
     const normal = shots[0].shot;
     for (const s of shots.slice(1)) {
       if (s.shot.image.width !== normal.image.width || s.shot.image.height !== normal.image.height) {
         warnings.add(`"${s.label}" 상태는 크기가 기본과 다릅니다(${s.shot.image.width}×${s.shot.image.height}, 기본 ${normal.image.width}×${normal.image.height}). 엔진에서 상태를 바꿀 때 크기가 튈 수 있습니다.`);
       }
     }
-    const frameList = shots.map((s) => ({ key: s.state, label: s.label, image: s.shot.image }));
-    const target = { ...spec.target, label: shots[0].shot.label };
+    // 상태 × 프레임을 한 줄로 편다. 이름: 이름[_상태][_프레임번호]
+    const many = shots.length > 1;
+    const cellsOf = (s) => {
+      const animated = s.shot.frames.length > 1;
+      const stem = many ? `${spec.name}_${s.state}` : spec.name;
+      return s.shot.frames.map((fr, j) => ({
+        filename: animated ? `${stem}_${j}` : stem, state: s.state, label: s.label, image: fr.image,
+        duration: animated ? frameMs : 100, time: fr.time,
+      }));
+    };
+    const target = { ...spec.target, label: normal.label };
     const base = { id: source.id, name: source.name, version: source.version, target, scale };
-    const frameData = (f, cell) => ({
-      filename: f.filename, cell, duration: f.duration, state: f.state, label: f.label,
-      sourceSize: { w: f.shot.image.width, h: f.shot.image.height },
-      spriteSourceSize: { x: 0, y: 0, w: f.shot.image.width, h: f.shot.image.height },
+    const frameData = (c, cell) => ({
+      filename: c.filename, cell, duration: c.duration, state: c.state, label: c.label,
+      sourceSize: { w: c.image.width, h: c.image.height },
+      spriteSourceSize: { x: 0, y: 0, w: c.image.width, h: c.image.height },
     });
-    const insets = shots[0].shot.insets;
-    if (spec.output.layout === "sheet" || shots.length === 1) {
-      const packed = shots.length === 1
-        ? { image: shots[0].shot.image, cells: [{ x: 0, y: 0, w: shots[0].shot.image.width, h: shots[0].shot.image.height }] }
-        : packSheet(shots.map((s) => ({ image: s.shot.image })), spec.output.sheet);
-      const stem = `${spec.name}${shots.length > 1 ? "-sheet" : ""}${scaleSuffix(scale)}`;
-      const png = `${stem}.png`;
+    const animInfo = (list) => {
+      const per = list.filter((s) => s.shot.frames.length > 1).map((s) => ({ key: s.state, frames: s.shot.frames.length, length: Math.round(s.shot.anim?.length || 0), names: s.shot.anim?.names || [] }));
+      return per.length ? { fps: animate.fps, frameDuration: frameMs, states: per } : null;
+    };
+    // 미리보기(편집기): 상태마다 프레임 그림 목록
+    const previewStates = (list) => list.map((s) => ({ key: s.state, label: s.label, fps: animate?.fps ?? null, images: s.shot.frames.map((fr) => fr.image) }));
+    const write = (list, stem) => {
+      const cells = list.flatMap(cellsOf);
+      const packed = cells.length === 1
+        ? { image: cells[0].image, cells: [{ x: 0, y: 0, w: cells[0].image.width, h: cells[0].image.height }] }
+        : packSheet(cells.map((c) => ({ image: c.image })), spec.output.sheet);
+      const png = `${stem}${scaleSuffix(scale)}.png`;
       const data = buildSheetData({
-        frames: shots.map((s, i) => frameData(s, packed.cells[i])), image: png,
-        size: { w: packed.image.width, h: packed.image.height }, scale, spec, insets,
-        source: { ...base, box: shots[0].shot.box }, warnings: [...warnings],
+        frames: cells.map((c, i) => frameData(c, packed.cells[i])), image: png,
+        size: { w: packed.image.width, h: packed.image.height }, scale, spec, insets: list[0].shot.insets,
+        source: { ...base, box: list[0].shot.box }, warnings: [...warnings], animation: animInfo(list),
       });
       files.push({ name: png, kind: "png", scale, size: { w: packed.image.width, h: packed.image.height }, bytes: encodePng(packed.image) });
-      files.push({ name: `${stem}.json`, kind: "json", scale, bytes: Buffer.from(JSON.stringify(data, null, 2) + "\n") });
-      previews.push({ scale, png, insets, size: { w: packed.image.width, h: packed.image.height }, box: shots[0].shot.box, cssBox: shots[0].shot.cssBox, frames: frameList });
-    } else {
-      for (const s of shots) {
-        const stem = `${s.filename}${scaleSuffix(scale)}`;
-        const png = `${stem}.png`;
-        const data = buildSheetData({
-          frames: [frameData(s, { x: 0, y: 0, w: s.shot.image.width, h: s.shot.image.height })], image: png,
-          size: { w: s.shot.image.width, h: s.shot.image.height }, scale, spec, insets: s.shot.insets,
-          source: { ...base, box: s.shot.box }, warnings: [...warnings],
-        });
-        files.push({ name: png, kind: "png", scale, size: { w: s.shot.image.width, h: s.shot.image.height }, bytes: encodePng(s.shot.image) });
-        files.push({ name: `${stem}.json`, kind: "json", scale, bytes: Buffer.from(JSON.stringify(data, null, 2) + "\n") });
-        previews.push({ scale, png, insets: s.shot.insets, size: { w: s.shot.image.width, h: s.shot.image.height }, box: s.shot.box, cssBox: s.shot.cssBox, frames: frameList.filter((x) => x.key === s.state) });
-      }
-    }
+      files.push({ name: png.replace(/\.png$/, ".json"), kind: "json", scale, bytes: Buffer.from(JSON.stringify(data, null, 2) + "\n") });
+      previews.push({ scale, png, insets: list[0].shot.insets, size: { w: packed.image.width, h: packed.image.height }, box: list[0].shot.box, cssBox: list[0].shot.cssBox, frames: previewStates(list) });
+    };
+    const total = shots.reduce((n, s) => n + s.shot.frames.length, 0);
+    if (spec.output.layout === "sheet" || shots.length === 1) write(shots, total > 1 ? `${spec.name}-sheet` : spec.name);
+    else for (const s of shots) write([s], s.shot.frames.length > 1 ? `${spec.name}_${s.state}-sheet` : `${spec.name}_${s.state}`);
   }
   return { files, previews, warnings: [...warnings] };
 }
+
+/** 프레임 묶음이 크기·픽셀까지 모두 같은가 */
+function sameFrames(a, b) { return a.length === b.length && a.every((x, i) => sameImage(x.image, b[i].image)); }
 
 /**
  * 폴더에 쓴다. 같은 이름의 이전 파일은 .previous/로 옮긴다(직전 한 벌만 보관).

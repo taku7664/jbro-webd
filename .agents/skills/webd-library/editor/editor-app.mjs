@@ -9,6 +9,7 @@ import {
 import { initExport } from "./export-panel.mjs";
 import { bodyRange, replaceBody, cssForCopy, mergeCss, classValue, clipboardText } from "./structure.mjs";
 import { findStates, applyWebdState, revertWebdState, rewriteStateSelectors, rewriteStateSelector } from "./states.mjs";
+import { animInfo, seekAnimations, frameTimes, FPS_CHOICES } from "./anim.mjs";
 
 const $ = (id) => document.getElementById(id);
 /** 로컬 시간대 오프셋을 붙인 ISO 문자열(library.mjs의 localIso와 같은 형식) */
@@ -27,6 +28,8 @@ const S = {
   model: null, savedBody: "", struct: { ok: false, reason: "아직 불러오는 중입니다." },
   // 상태(타임라인): CSS에서 찾은 상태 목록과 지금 미리보기에 건 상태. 미리보기에만 걸고 저장 파일에는 남지 않는다.
   states: [], stateKey: "normal", stateUndo: [],
+  // 프레임 줄: 지금 상태에서 도는 CSS 애니메이션. playing이면 그대로 재생, 아니면 frame 칸 시각에 멈춤.
+  anim: { length: 0, count: 0, names: [] }, playing: true, frame: 0,
 };
 const CLIP_KEY = "webd-editor-clipboard";
 function buildModel(html) {
@@ -287,7 +290,53 @@ function applyPreviewState() {
     S.stateUndo = applyWebdState(doc, st.tokens, scope);
   }
   needDraw = true;
+  refreshAnim();
 }
+
+// ---------- 프레임 줄(애니메이션) ----------
+// 상태를 걸거나 CSS를 고치면 애니메이션이 새로 시작하므로 한 프레임 뒤에 다시 읽고, 멈춤 중이면 그 칸 시각으로 다시 옮긴다.
+const animFps = () => exp?.animation()?.fps || 24;
+const animTimes = () => frameTimes(S.anim.length, animFps(), exp?.animation()?.maxFrames || 120);
+let animTimer = null;
+function refreshAnim() {
+  // 화면이 가려져도(백그라운드 탭) 돌도록 rAF 대신 짧은 타이머로
+  clearTimeout(animTimer);
+  animTimer = setTimeout(() => {
+    if (!doc) return;
+    S.anim = animInfo(doc);
+    const n = animTimes().times.length;
+    if (S.frame >= n) S.frame = 0;
+    if (!S.playing && S.anim.length) seekAnimations(doc, animTimes().times[S.frame]);
+    renderTimeline();
+    exp?.animDetected();
+  }, 40);
+}
+function seekFrame(i) {
+  const times = animTimes().times;
+  S.playing = false; S.frame = Math.max(0, Math.min(times.length - 1, i));
+  seekAnimations(doc, times[S.frame]); needDraw = true;
+  markFrame();
+}
+function togglePlay() {
+  S.playing = !S.playing;
+  if (S.playing) seekAnimations(doc, null); else seekFrame(currentFrame());
+  renderTimeline();
+}
+/** 재생 중 지금 몇 번째 칸인지(가장 긴 애니메이션의 시각 기준) */
+function currentFrame() {
+  if (!doc || !S.anim.length) return 0;
+  const a = doc.getAnimations().filter((x) => x.animationName != null).sort((p, q) => (q.effect?.getTiming?.().duration || 0) - (p.effect?.getTiming?.().duration || 0))[0];
+  const ct = Number(a?.currentTime) || 0;
+  return Math.floor((ct % S.anim.length) / (1000 / animFps())) % Math.max(1, animTimes().times.length);
+}
+function markFrame() {
+  const f = S.playing ? currentFrame() : S.frame;
+  const btn = $("timeline").querySelector(".tl-play");
+  if (btn) { btn.textContent = S.playing ? "❚❚" : "▶"; btn.setAttribute("aria-pressed", String(S.playing)); btn.title = S.playing ? "멈추고 지금 칸 보기" : "재생"; }
+  for (const c of $("timeline").querySelectorAll(".tl-frame")) c.classList.toggle("is-now", Number(c.dataset.i) === f);
+  const out = $("timeline").querySelector(".tl-frame-no"); if (out) out.textContent = `${f + 1}/${animTimes().times.length}`;
+}
+(function tick() { if (S.playing && S.anim.length) markFrame(); requestAnimationFrame(tick); })();
 function setPreviewState(key) {
   if (key !== "normal" && !S.states.some((s) => s.key === key)) return;
   S.stateKey = key;
@@ -318,7 +367,37 @@ function renderTimeline() {
       el("span", { class: "tl-label", text: "상태" }),
       S.states.length ? row : el("span", { class: "tl-empty", text: S.editable ? "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없습니다." : "이 조각은 화면에서 편집할 수 없어 상태를 찾지 않습니다." }),
       S.states.length ? el("span", { class: "tl-scope", text: S.stateKey === "normal" ? `${S.states.length}개 상태` : `${scope}에 걸림 · 저장 안 됨` }) : null),
+    frameRow(),
   );
+  markFrame();
+}
+
+/** 프레임 줄: ▶/❚❚, fps, 프레임 칸(플래시 타임라인처럼 5칸마다 번호). 칸을 누르면 그 시각에 멈춤 */
+function frameRow() {
+  const r = el("div", { class: "tl-row tl-frames-row" }, el("span", { class: "tl-label", text: "프레임" }));
+  if (!S.anim.length) {
+    r.append(el("span", { class: "tl-empty", text: doc ? "지금 상태에는 CSS 애니메이션(@keyframes)이 없습니다." : "" }));
+    return r;
+  }
+  const { times, clipped, total } = animTimes();
+  const fps = animFps();
+  const cells = el("div", { class: "tl-frames", role: "group", "aria-label": "애니메이션 프레임" });
+  times.forEach((tm, i) => cells.append(el("button", { type: "button", class: "tl-frame" + (i % 5 === 4 ? " is-fifth" : ""), "data-i": String(i),
+    title: `${i + 1}프레임 · ${Math.round(tm)}ms`, "aria-label": `${i + 1}프레임`, onclick: () => seekFrame(i) }, i === 0 || i % 5 === 4 ? el("span", { text: String(i + 1) }) : null)));
+  cells.addEventListener("keydown", (e) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault(); e.stopPropagation();
+    const n = times.length, i = ((S.playing ? currentFrame() : S.frame) + (e.key === "ArrowRight" ? 1 : n - 1)) % n;
+    seekFrame(i); cells.querySelector(`.tl-frame[data-i="${i}"]`)?.focus();
+  });
+  const fpsSel = el("select", { class: "tl-fps", "aria-label": "초당 프레임" }, ...FPS_CHOICES.map((v) => { const o = el("option", { value: String(v), text: `${v}fps` }); if (v === fps) o.selected = true; return o; }));
+  fpsSel.addEventListener("change", () => { exp?.setAnimationFps(Number(fpsSel.value)); S.frame = 0; refreshAnim(); });
+  r.append(
+    el("button", { type: "button", class: "tl-play", "aria-pressed": String(S.playing), title: S.playing ? "멈추고 지금 칸 보기" : "재생", onclick: togglePlay, text: S.playing ? "❚❚" : "▶" }),
+    cells,
+    el("span", { class: "tl-scope tl-frame-info" }, el("output", { class: "tl-frame-no" }), ` · ${S.anim.names.slice(0, 3).join(", ")} · ${Math.round(S.anim.length)}ms${clipped ? ` (앞 ${times.length}/${total}칸)` : ""} · `, fpsSel),
+  );
+  return r;
 }
 
 // ---------- 구조 편집(유니티 Hierarchy처럼) ----------
@@ -1029,7 +1108,7 @@ $("tab-css").onclick = () => showTab("css");
 $("tab-export").onclick = () => showTab("export");
 
 const exp = ID ? initExport({
-  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(), record: recordExport, showState: (key) => setPreviewState(key),
+  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(), record: recordExport, showState: (key) => setPreviewState(key), animNow: () => S.anim, onAnimationChange: () => refreshAnim(),
   selected: () => (S.selected && S.selected.isConnected ? S.selected : null),
   pathOf, label, resolve: (p) => (doc ? resolvePath(p) : null),
   frameDoc: () => doc, frameWin: () => win,

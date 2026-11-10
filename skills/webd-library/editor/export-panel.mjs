@@ -5,6 +5,7 @@
 // 미리보기 위에는 대상 범위와 9·3-slice 인셋 안내선을 그리고, 안내선을 끌어 인셋을 바꿀 수 있다.
 
 const SLICE_LABEL = { none: "한 장", nine: "9-slice", "three-h": "3-slice 가로", "three-v": "3-slice 세로" };
+const FPS_CHOICES = [8, 12, 24, 30, 60];
 
 export function initExport(ctx) {
   const { pane, overlay } = ctx;
@@ -96,6 +97,7 @@ export function initExport(ctx) {
         ...(spec.slice.mode === "none" ? [] : sliceRows()),
       ]),
       section("상태", stateRows()),
+      section("애니메이션", animRows()),
       section("출력", [
         row("이름", input("name", spec.name, (v) => { spec.name = v; changed({ preview: false }); }, { spellcheck: "false" })),
         ...(frameCount() > 1 ? [row("형태", seg("layout", [["sheet", "시트 한 장"], ["files", "상태마다 파일"]], spec.output.layout, (v) => { spec.output.layout = v; changed({ preview: false }); }),
@@ -133,6 +135,21 @@ export function initExport(ctx) {
     ];
   }
 
+  /** CSS 애니메이션(@keyframes)을 프레임으로 찍을지와 fps. 길이는 상태마다 페이지에서 잰다. 프레임을 보는 것은 타임라인 프레임 줄에서. */
+  function animRows() {
+    const an = spec.animation || { enabled: true, fps: 24, maxFrames: 120 };
+    const now = ctx.animNow?.() || { length: 0 };
+    const n = now.length ? Math.max(1, Math.round(now.length / (1000 / an.fps))) : 0;
+    const info = now.length
+      ? `지금 미리보기: ${now.names.slice(0, 3).join(", ")} · ${Math.round(now.length)}ms → ${Math.min(n, an.maxFrames)}프레임(${an.fps}fps)${n > an.maxFrames ? ` · 최대 ${an.maxFrames}프레임에서 자름` : ""}. 상태마다 길이를 따로 재고, 애니메이션이 없는 상태는 한 장입니다.`
+      : "지금 미리보기에는 CSS 애니메이션(@keyframes)이 없습니다. 상태에 따라 애니메이션이 생기면 그 상태만 프레임으로 찍습니다.";
+    return [
+      row("프레임", check("CSS 애니메이션을 프레임으로 찍기", an.enabled !== false, (on) => { spec.animation = { ...an, enabled: on }; changed(); ctx.onAnimationChange?.(); })),
+      row("fps", seg("fps", FPS_CHOICES.map((v) => [String(v), String(v)]), String(an.fps), (v) => { spec.animation = { ...an, fps: Number(v) }; changed(); ctx.onAnimationChange?.(); }),
+        el("span", { class: "xp-sub", text: info })),
+    ];
+  }
+
   /** CSS에서 찾은 상태: 기본은 늘 들어가고, 나머지는 켜고 끈다. 상태를 보는 것은 아래 타임라인에서. */
   function stateRows() {
     const list = spec.states || [];
@@ -155,27 +172,41 @@ export function initExport(ctx) {
       elx ? " · 계층에서 다른 요소를 고르면 대상이 따라 바뀝니다." : " · 이 요소를 찾지 못했습니다. 다시 고르세요.");
   }
 
+  let players = [];
+  /** 결과 칸의 프레임을 fps대로 돌린다(새로 그리면 이전 것은 멈춤) */
+  function playFrames(img, urls, fps) {
+    let i = 0;
+    const id = setInterval(() => { if (!img.isConnected) { clearInterval(id); return; } i = (i + 1) % urls.length; img.src = urls[i]; }, 1000 / fps);
+    players.push(id);
+  }
   function renderResult() {
+    players.forEach(clearInterval); players = [];
     const box = pane.querySelector(".xp-result"); if (!box) return;
     box.classList.remove("stale");
     box.replaceChildren();
     if (!preview) { box.append(el("p", { class: "note", text: active ? "렌더를 기다리는 중입니다." : "" })); return; }
     for (const p of preview.previews) {
-      const frames = p.frames?.length > 1 ? p.frames : null;
-      // 상태가 여럿이면 상태마다 한 칸씩(누르면 타임라인도 그 상태로), 하나면 한 장
-      const main = frames ? frames[0] : { url: p.url, size: p.size };
+      const animated = p.frames?.some((f) => f.urls?.length > 1);
+      const frames = p.frames?.length > 1 || animated ? p.frames : null;
+      // 상태가 여럿이거나 애니메이션이면 상태마다 한 칸씩(누르면 타임라인도 그 상태로), 아니면 한 장
+      const main = frames ? { ...frames[0], url: frames[0].urls?.[0] ?? frames[0].url } : { url: p.url, size: p.size };
       const w = main.size.w / p.scale, h = main.size.h / p.scale;
       // 작은 스프라이트는 정수배로 키워 픽셀이 보이게 한다(실제 파일 크기는 그대로)
       const zoom = Math.max(1, Math.min(8, Math.floor((frames ? 96 : 160) / Math.max(w, h, 1))));
-      const pic = (f) => el("img", { src: f.url, alt: `${f.label ?? p.png} 결과`, width: String(f.size.w / p.scale * zoom), height: String(f.size.h / p.scale * zoom), class: zoom > 1 ? "pixelated" : null });
+      const pic = (f) => {
+        const urls = f.urls || [f.url];
+        const img = el("img", { src: urls[0], alt: `${f.label ?? p.png} 결과`, width: String(f.size.w / p.scale * zoom), height: String(f.size.h / p.scale * zoom), class: zoom > 1 ? "pixelated" : null });
+        if (urls.length > 1) playFrames(img, urls, f.fps || 24);   // 내보낸 프레임을 그대로 돌려 본다
+        return img;
+      };
       const caption = el("figcaption", {}, el("strong", { text: p.png }), ` ${p.size.w}×${p.size.h}px`,
-        frames ? ` · ${frames.length}칸` : "",
+        frames ? ` · ${frames.reduce((n, f) => n + (f.urls?.length || 1), 0)}칸` : "",
         p.insets ? ` · L${p.insets.l} T${p.insets.t} R${p.insets.r} B${p.insets.b}` : "",
         zoom > 1 ? el("span", { class: "xp-zoom", text: ` · 화면에서 ×${zoom} 확대` }) : null);
       if (frames) {
         box.append(el("figure", { class: "xp-fig" },
           el("div", { class: "xp-frames" }, ...frames.map((f) => el("button", { type: "button", class: "xp-frame", title: `타임라인에서 "${f.label}" 보기`, onclick: () => ctx.showState?.(f.key) },
-            el("span", { class: "xp-img ui-checkerboard" }, pic(f)), el("span", { class: "xp-frame-name", text: f.label })))),
+            el("span", { class: "xp-img ui-checkerboard" }, pic(f)), el("span", { class: "xp-frame-name", text: f.urls?.length > 1 ? `${f.label} · ${f.urls.length}프레임` : f.label })))),
           caption));
       } else {
         box.append(el("figure", { class: "xp-fig" }, el("div", { class: "xp-img ui-checkerboard" }, pic({ ...main, label: p.png })), caption));
@@ -205,12 +236,13 @@ export function initExport(ctx) {
     const foot = pane.querySelector(".xp-foot"); if (!foot) return;
     // 결과가 있으면 실제 칸 수(기본과 같아서 뺀 상태 제외), 없으면 켠 상태 수
     const got = preview?.previews;   // 미리보기는 배율 하나: 시트면 1개(frames 여럿), 상태마다 파일이면 상태 수만큼
-    const n = spec.scales.length, k = got?.length ? (got.length > 1 ? got.length : (got[0].frames?.length || 1)) : frameCount();
-    const files = k > 1 && spec.output.layout === "files" ? n * k : n;
+    const cellsIn = (p) => (p.frames || []).reduce((n, f) => n + (f.urls?.length || 1), 0) || 1;
+    const n = spec.scales.length, k = got?.length ? (got.length > 1 ? got.reduce((s, p) => s + cellsIn(p), 0) : cellsIn(got[0])) : frameCount();
+    const files = got?.length ? n * got.length : (frameCount() > 1 && spec.output.layout === "files" ? n * frameCount() : n);
     const dir = spec.output.dir || defaultDir;
     foot.replaceChildren(...[
       ctx.isDirty() ? el("p", { class: "xp-dirty", text: "저장하지 않은 CSS 변경도 화면 그대로 내보냅니다." }) : null,
-      el("p", { class: "xp-summary" }, `${k > 1 && spec.output.layout === "sheet" ? "시트 " : ""}PNG ${files}장 + JSON ${files}개 (${k > 1 ? `상태 ${k}칸 · ` : ""}${spec.scales.map((x) => `${x}x`).join("·")}) → `, el("code", { text: dir })),
+      el("p", { class: "xp-summary" }, `${k > 1 && spec.output.layout === "sheet" ? "시트 " : ""}PNG ${files}장 + JSON ${files}개 (${k > 1 ? `${k}칸 · ` : ""}${spec.scales.map((x) => `${x}x`).join("·")}) → `, el("code", { text: dir })),
       el("div", { class: "xp-actions" },
         el("button", { type: "button", class: "primary ui-primary xp-go", text: busy ? "내보내는 중…" : "내보내기", disabled: busy || null, onclick: doExport }),
         lastExport ? el("span", { class: `xp-last${justDone ? " done" : ""}`, text: `${justDone ? "완료" : "마지막"} ${String(lastExport.at).slice(5, 16).replace("T", " ")} · ${lastExport.files.length}개 파일` }) : null,
@@ -318,7 +350,7 @@ export function initExport(ctx) {
   // ---------- 작은 UI 부품(스타일 탭과 같은 이름-값 두 열) ----------
   function section(title, rows) { return el("section", { class: "xp-sec" }, el("h3", { class: "sect", text: title }), el("div", { class: "xp-rows" }, ...rows)); }
   function row(name, control, sub) { return el("div", { class: "xp-row" }, el("span", { class: "xp-name", text: name }), el("div", { class: "xp-val" }, control, sub ?? null)); }
-  const ARIA = { target: "찍을 것", background: "배경", bounds: "범위", slice: "자르기", fill: "가운데", size: "크기", layout: "형태" };
+  const ARIA = { target: "찍을 것", background: "배경", bounds: "범위", slice: "자르기", fill: "가운데", size: "크기", layout: "형태", fps: "초당 프레임" };
   function seg(key, options, value, on) {
     return el("div", { class: "xp-seg", role: "radiogroup", "aria-label": ARIA[key] ?? key },
       ...options.map(([v, t]) => el("button", { type: "button", role: "radio", "aria-checked": String(v === value), "data-xp": `${key}-${v}`, text: t,
@@ -372,6 +404,11 @@ export function initExport(ctx) {
         setStatus(`저장된 대상(${lost})을 찾지 못해 조각 전체로 바꿨습니다.`);
       } else if (spec && active) render();
     },
+    animation() { return spec?.animation || null; },
+    /** 편집기가 지금 미리보기의 애니메이션을 다시 읽었다(애니메이션 줄의 안내 문구만 갱신) */
+    animDetected() { if (active && spec) { const s = pane.querySelector('[data-xp="chk-CSS 애니메이션을 프레임으로 찍기"]')?.closest(".xp-sec"); if (s) s.replaceWith(section("애니메이션", animRows())); } },
+    /** 타임라인의 fps 고르기(사용자가 바꾼 것이라 되돌리기 기록에 넣음) */
+    setAnimationFps(fps) { if (!spec) return; spec.animation = { ...(spec.animation || { enabled: true, maxFrames: 120 }), fps }; changed(); },
     /** 편집기가 CSS에서 상태를 다시 찾았다(불러올 때·CSS를 고칠 때). 사용자가 바꾼 것이 아니라 되돌리기 기록에는 넣지 않는다. */
     statesDetected(list) {
       detected = list;

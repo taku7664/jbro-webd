@@ -17,8 +17,9 @@ export const FORMAT_VERSION = 1;
  * @param {{l,t,r,b}|null} o.insets  배율 픽셀 인셋(슬라이스 없으면 null)
  * @param {object} o.source      { id, name, version, target }
  * @param {string[]} [o.warnings]
+ * @param {object|null} [o.animation]  애니메이션 프레임 정보(meta.webd.animation)
  */
-export function buildSheetData({ frames, image, size, scale, spec, insets, source, warnings = [] }) {
+export function buildSheetData({ frames, image, size, scale, spec, insets, source, warnings = [], animation = null }) {
   const entry = (f) => ({
     frame: { ...f.cell }, rotated: false,
     trimmed: f.spriteSourceSize.x !== 0 || f.spriteSourceSize.y !== 0 || f.spriteSourceSize.w !== f.sourceSize.w || f.spriteSourceSize.h !== f.sourceSize.h,
@@ -46,6 +47,7 @@ export function buildSheetData({ frames, image, size, scale, spec, insets, sourc
       frameTags, layers: [], slices,
       webd: {
         source,
+        animation,   // { fps, frameDuration, states: [{ key, frames, length(ms), names }] } — 애니메이션 프레임이 있을 때만
         states: frames.length > 1 ? frameTags.map((t) => ({ key: t.name, label: frames[t.from].label ?? t.name, from: t.from, to: t.to })) : null,
         slice: insets ? { mode: spec.slice.mode, fill: spec.slice.fill, insets: { ...insets }, insetsCss: { ...spec.slice.insets } } : null,
         engines: insets ? engineValues(spec, insets, image, scale) : null,
