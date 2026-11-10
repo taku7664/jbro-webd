@@ -265,7 +265,7 @@ $("frame").addEventListener("load", () => {
 });
 
 // ---------- 상태 타임라인(플래시 버튼의 Up·Over·Down처럼) ----------
-// CSS에서 찾은 상태를 미리보기 아래 한 줄에 칸으로 늘어놓고, 고른 칸의 상태를 미리보기에 건다.
+// CSS에서 찾은 상태를 미리보기 위 한 줄에 칸으로 늘어놓고, 고른 칸의 상태를 미리보기에 건다.
 // 상태는 고른 요소(없으면 조각 전체)에 걸린다. 내보내기도 같은 함수(states.mjs)로 건다.
 
 let statesTimer = null;
@@ -384,6 +384,31 @@ function frameRow() {
   const cells = el("div", { class: "tl-frames", role: "group", "aria-label": "애니메이션 프레임" });
   times.forEach((tm, i) => cells.append(el("button", { type: "button", class: "tl-frame" + (i % 5 === 4 ? " is-fifth" : ""), "data-i": String(i),
     title: `${i + 1}프레임 · ${Math.round(tm)}ms`, "aria-label": `${i + 1}프레임`, onclick: () => seekFrame(i) }, i === 0 || i % 5 === 4 ? el("span", { text: String(i + 1) }) : null)));
+  // 끌어서 훑기(플래시 재생헤드처럼): 누른 채 좌우로 움직이면 지나가는 칸 시각으로 멈춤. 줄 끝에 닿으면 저절로 스크롤
+  cells.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const n = times.length;
+    const at = (x) => {
+      const r = cells.getBoundingClientRect();
+      if (x > r.right - 12) cells.scrollLeft += 10; else if (x < r.left + 12) cells.scrollLeft -= 10;
+      const w = cells.firstElementChild?.getBoundingClientRect().width || 13;
+      return Math.max(0, Math.min(n - 1, Math.floor((x - r.left + cells.scrollLeft) / w)));
+    };
+    let last = -1, lastX = e.clientX;
+    const move = (ev) => { lastX = ev.clientX; const i = at(lastX); if (i !== last) { last = i; seekFrame(i); } };
+    // 포인터를 줄 끝에 대고 있으면 움직이지 않아도 계속 스크롤하며 훑는다
+    const edge = setInterval(() => { const r = cells.getBoundingClientRect(); if (lastX > r.right - 12 || lastX < r.left + 12) move({ clientX: lastX }); }, 40);
+    const up = () => {
+      clearInterval(edge);
+      removeEventListener("pointermove", move); removeEventListener("pointerup", up); removeEventListener("pointercancel", up);
+      document.body.classList.remove("tl-scrubbing");
+      cells.querySelector(`.tl-frame[data-i="${last}"]`)?.focus({ preventScroll: true });
+    };
+    document.body.classList.add("tl-scrubbing");
+    addEventListener("pointermove", move); addEventListener("pointerup", up); addEventListener("pointercancel", up);
+    move(e);
+  });
   cells.addEventListener("keydown", (e) => {
     if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
     e.preventDefault(); e.stopPropagation();

@@ -44,6 +44,7 @@
       <span class="lg-box"><i class="lg-m"></i>margin</span><span class="lg-box"><i class="lg-b"></i>border</span><span class="lg-box"><i class="lg-p"></i>padding</span><span class="lg-box"><i class="lg-c"></i>content</span>
       <span class="lg-xp"><i class="lg-target"></i>내보낼 범위</span><span class="lg-xp"><i class="lg-guide"></i>인셋(끌어서 조절)</span>
     </div>
+    <div class="timeline" id="timeline" aria-label="타임라인"></div>
     <div class="stage" id="stage">
       <div class="canvas" id="canvas">
         <iframe id="frame" title="컴포넌트 미리보기"></iframe>
@@ -51,14 +52,13 @@
         <div class="xp-overlay" id="xp-overlay" hidden></div>
       </div>
     </div>
-    <div class="timeline" id="timeline" aria-label="타임라인"></div>
   </section>
 
   <aside class="panel" aria-label="스타일">
     <div class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules">스타일</button>
       <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css">CSS 원문</button>
-      <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export">내보내기</button>
+      <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export" title="게임용 PNG + 좌표 JSON(Aseprite 호환, Unity·Godot 값). 설정을 바꾸면 결과가 다시 렌더됩니다.">내보내기</button>
     </div>
     <div class="pane" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
       <p class="hint" id="hint">왼쪽 HTML 요소 트리에서 대상을 고르거나, 상단의 ‘요소 선택’을 켜고 미리보기에서 고르세요. 값을 고치면 바로 반영되고, 저장해야 파일에 남습니다.</p>

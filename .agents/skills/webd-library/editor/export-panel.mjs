@@ -77,8 +77,14 @@ export function initExport(ctx) {
   // ---------- 그리기 ----------
   function render() {
     if (!spec) return;
+    // 순서: 종류(자르기·애니메이션) → 대상(무엇을·어떤 상태로) → 출력. 설명은 줄마다 마우스를 올리면 뜨는 툴팁으로.
     pane.replaceChildren(
-      el("p", { class: "hint xp-intro", text: "조각을 게임에서 쓸 PNG와 좌표 JSON(Aseprite 호환 + Unity·Godot 값)으로 내보냅니다. 설정을 바꾸면 아래 '결과'에 실제로 렌더한 이미지가 나옵니다." }),
+      section("종류", [
+        row("자르기", seg("slice", [["none", "한 장"], ["nine", "9-slice"], ["three-h", "3-slice ↔"], ["three-v", "3-slice ↕"]], spec.slice.mode, (v) => { spec.slice.mode = v; if (v !== "none" && !anyInset()) estimate(false); changed(); }, "slice"),
+          null, "한 장: 그대로 찍음\n9-slice: 네 모서리를 고정하고 가운데만 늘림\n3-slice: 한 축(가로나 세로)만 늘림"),
+        animRow(),
+        ...(spec.slice.mode === "none" ? [] : sliceRows()),
+      ]),
       section("대상", [
         row("찍을 것", seg("target", [["root", "조각 전체"], ["element", "고른 요소"]], spec.target.kind, (v) => {
           if (v === "element") {
@@ -87,30 +93,26 @@ export function initExport(ctx) {
             spec.target = { kind: "element", path: ctx.pathOf(sel), label: ctx.label(sel) };
           } else spec.target = { kind: "root" };
           changed();
-        }), targetNote()),
-        row("배경", seg("background", [["transparent", "투명"], ["keep", "원래 배경 포함"]], spec.background, (v) => { spec.background = v; changed(); })),
+        }), targetNote(), "고른 요소면 계층에서 다른 요소를 고르는 대로 대상이 따라 바뀝니다.\n9·3-slice는 틀을 그리는 요소를 고르는 것이 정확합니다."),
+        row("배경", seg("background", [["transparent", "투명"], ["keep", "원래 배경"]], spec.background, (v) => { spec.background = v; changed(); }),
+          null, "투명: 배경 없이 찍음(알파)\n원래 배경: 조각의 배경색까지"),
         row("범위", seg("bounds", [["ink", "그려진 픽셀"], ["box", "상자 그대로"]], spec.bounds, (v) => { spec.bounds = v; changed(); }),
-          el("span", { class: "xp-sub", text: spec.bounds === "ink" ? "그림자·광채까지 넣고 빈 여백은 잘라 냅니다." : "요소 상자(조각 전체면 저장 크기)대로 자릅니다." })),
+          null, "그려진 픽셀: 그림자·광채까지 넣고 빈 여백을 잘라 냄\n상자 그대로: 요소 상자(조각 전체면 저장 크기)대로"),
+        stateRow(),
       ]),
-      section("종류", [
-        row("자르기", seg("slice", Object.entries(SLICE_LABEL), spec.slice.mode, (v) => { spec.slice.mode = v; if (v !== "none" && !anyInset()) estimate(false); changed(); })),
-        ...(spec.slice.mode === "none" ? [] : sliceRows()),
-      ]),
-      section("상태", stateRows()),
-      section("애니메이션", animRows()),
       section("출력", [
-        row("이름", input("name", spec.name, (v) => { spec.name = v; changed({ preview: false }); }, { spellcheck: "false" })),
+        row("이름", input("name", spec.name, (v) => { spec.name = v; changed({ preview: false }); }, { spellcheck: "false" }), null, "파일 이름. 배율·상태·프레임이 뒤에 붙습니다(이름_hover_3@2x.png)."),
         ...(frameCount() > 1 ? [row("형태", seg("layout", [["sheet", "시트 한 장"], ["files", "상태마다 파일"]], spec.output.layout, (v) => { spec.output.layout = v; changed({ preview: false }); }),
-          el("span", { class: "xp-sub", text: spec.output.layout === "sheet" ? "상태를 한 PNG에 모으고 JSON의 frameTags에 상태 이름을 넣습니다." : "상태마다 PNG·JSON을 따로 씁니다(이름_상태.png)." }))] : []),
+          null, "시트 한 장: 모든 칸을 PNG 하나에 모으고 JSON frameTags에 상태 이름\n상태마다 파일: 이름_상태.png 따로")] : []),
         row("배율", el("div", { class: "xp-checks" }, ...[1, 2, 3, 4].map((s) => check(`${s}x`, spec.scales.includes(s), (on) => {
           const next = new Set(spec.scales); on ? next.add(s) : next.delete(s);
           if (!next.size) { setStatus("배율은 하나 이상 골라야 합니다."); render(); return; }
           spec.scales = [...next].sort((a, b) => a - b); changed();
-        })))),
+        }))), null, "배율마다 다시 렌더해 선명하게 찍습니다(@2x 파일)."),
         row("폴더", el("div", { class: "xp-dir" },
-          input("dir", spec.output.dir, (v) => { spec.output.dir = v; changed({ preview: false }); }, { placeholder: defaultDir, spellcheck: "false", "aria-describedby": "xp-dir-note" }),
-          spec.output.dir ? el("button", { type: "button", class: "xp-link", text: "기본 폴더로", onclick: () => { spec.output.dir = ""; changed({ preview: false }); render(); } }) : null),
-          el("span", { class: "xp-sub", id: "xp-dir-note", text: spec.output.dir ? "이 조각만 이 폴더에 씁니다." : `비워 두면 기본 폴더: ${defaultDir}` })),
+          input("dir", spec.output.dir, (v) => { spec.output.dir = v; changed({ preview: false }); }, { placeholder: "기본 폴더", spellcheck: "false", title: spec.output.dir || defaultDir }),
+          spec.output.dir ? el("button", { type: "button", class: "xp-link", text: "기본으로", title: defaultDir, onclick: () => { spec.output.dir = ""; changed({ preview: false }); render(); } }) : null),
+          null, `비워 두면 기본 폴더:\n${defaultDir}\n이 조각만 다른 곳에 쓰려면 전체 경로를 적으세요.`),
       ]),
       el("section", { class: "xp-result-wrap" }, el("h3", { class: "sect", text: "결과" }), el("div", { class: "xp-result" })),
       el("div", { class: "xp-status", role: "status", "aria-live": "polite" }),
@@ -126,50 +128,48 @@ export function initExport(ctx) {
       row("인셋", el("div", { class: "xp-insets" },
         ...sides.map(([k, lab, on]) => el("label", { class: on ? "" : "off" }, el("span", { text: lab }),
           num(`inset-${k}`, on ? spec.slice.insets[k] : 0, (v) => { spec.slice.insets[k] = v; estimateNote = ""; changed(); }, { disabled: !on, "aria-label": `인셋 ${lab}` }))),
-        el("button", { type: "button", class: "ui-control xp-btn", text: "CSS에서 추정", onclick: () => estimate(true) })),
-        el("span", { class: "xp-sub", text: estimateNote || "미리보기의 점선을 끌어도 바뀝니다. 모서리처럼 늘어나면 안 되는 폭(CSS px)입니다." })),
-      row("가운데", seg("fill", [["stretch", "늘림"], ["tile", "반복"]], spec.slice.fill, (v) => { spec.slice.fill = v; changed(); })),
+        el("button", { type: "button", class: "ui-control xp-btn", text: "추정", title: estimateNote || "CSS의 테두리·radius·clip-path 모서리 깎임으로 인셋을 정합니다.", onclick: () => estimate(true) })),
+        null, `모서리처럼 늘어나면 안 되는 폭(CSS px). 미리보기의 점선을 끌어도 바뀝니다.${estimateNote ? `\n추정 근거: ${estimateNote}` : ""}`),
+      row("가운데", seg("fill", [["stretch", "늘림"], ["tile", "반복"]], spec.slice.fill, (v) => { spec.slice.fill = v; changed(); }), null, "늘림: 가운데를 늘림\n반복: 가운데 무늬를 반복(tile)"),
       row("크기", seg("size", [["compact", "최소"], ["original", "원래"]], spec.slice.size, (v) => { spec.slice.size = v; changed(); }),
-        el("span", { class: "xp-sub", text: spec.slice.size === "compact" ? "인셋 + 가운데 4px 크기로 다시 렌더해 이미지를 작게 만듭니다." : "화면에 보이는 크기 그대로 찍습니다." })),
-      row("내용", check("틀만 찍기 (글자·아이콘 빼기)", spec.slice.frameOnly, (on) => { spec.slice.frameOnly = on; changed(); })),
+        null, "최소: 인셋 + 가운데 4px 크기로 다시 렌더해 작게\n원래: 화면에 보이는 크기 그대로"),
+      row("내용", check("틀만 찍기", spec.slice.frameOnly, (on) => { spec.slice.frameOnly = on; changed(); }), null, "글자·아이콘을 숨기고 틀만 찍습니다(엔진에서 글자를 따로 그릴 때)."),
     ];
   }
 
-  /** CSS 애니메이션(@keyframes)을 프레임으로 찍을지와 fps. 길이는 상태마다 페이지에서 잰다. 프레임을 보는 것은 타임라인 프레임 줄에서. */
-  function animRows() {
+  /** 애니메이션: 켜기 + fps를 한 줄에, 지금 미리보기의 길이·프레임 수는 짧게. 프레임을 보는 것은 타임라인 프레임 줄에서. */
+  function animRow() {
     const an = spec.animation || { enabled: true, fps: 24, maxFrames: 120 };
     const now = ctx.animNow?.() || { length: 0 };
-    const n = now.length ? Math.max(1, Math.round(now.length / (1000 / an.fps))) : 0;
-    const info = now.length
-      ? `지금 미리보기: ${now.names.slice(0, 3).join(", ")} · ${Math.round(now.length)}ms → ${Math.min(n, an.maxFrames)}프레임(${an.fps}fps)${n > an.maxFrames ? ` · 최대 ${an.maxFrames}프레임에서 자름` : ""}. 상태마다 길이를 따로 재고, 애니메이션이 없는 상태는 한 장입니다.`
-      : "지금 미리보기에는 CSS 애니메이션(@keyframes)이 없습니다. 상태에 따라 애니메이션이 생기면 그 상태만 프레임으로 찍습니다.";
-    return [
-      row("프레임", check("CSS 애니메이션을 프레임으로 찍기", an.enabled !== false, (on) => { spec.animation = { ...an, enabled: on }; changed(); ctx.onAnimationChange?.(); })),
-      row("fps", seg("fps", FPS_CHOICES.map((v) => [String(v), String(v)]), String(an.fps), (v) => { spec.animation = { ...an, fps: Number(v) }; changed(); ctx.onAnimationChange?.(); }),
-        el("span", { class: "xp-sub", text: info })),
-    ];
+    const n = now.length ? Math.min(an.maxFrames, Math.max(1, Math.round(now.length / (1000 / an.fps)))) : 0;
+    const on = an.enabled !== false;
+    const info = now.length ? `${now.names.slice(0, 2).join(", ")} · ${+(now.length / 1000).toFixed(2)}초 → ${n}프레임` : "지금 상태에 없음";
+    const fps = seg("fps", FPS_CHOICES.map((v) => [String(v), String(v)]), String(an.fps), (v) => { spec.animation = { ...an, fps: Number(v) }; changed(); ctx.onAnimationChange?.(); }, "tight");
+    if (!on) fps.classList.add("is-off");
+    return row("애니메이션", el("div", { class: "xp-anim" },
+      check("프레임", on, (v) => { spec.animation = { ...an, enabled: v }; changed(); ctx.onAnimationChange?.(); }),
+      fps, el("span", { class: "xp-hint", text: info })),
+      null, "CSS 애니메이션(@keyframes)을 fps 간격 프레임으로 찍습니다.\n길이는 상태마다 자동(주기가 다르면 최소공배수). 애니메이션이 없는 상태는 한 장.\n프레임은 미리보기 위 타임라인에서 볼 수 있습니다.");
   }
 
-  /** CSS에서 찾은 상태: 기본은 늘 들어가고, 나머지는 켜고 끈다. 상태를 보는 것은 아래 타임라인에서. */
-  function stateRows() {
+  /** 상태: CSS에서 찾은 상태 칩(기본은 늘 포함). 상태를 보는 것은 타임라인 상태 줄에서. */
+  function stateRow() {
     const list = spec.states || [];
-    if (!detected) return [row("찾은 상태", el("span", { class: "xp-sub", text: "미리보기를 불러오면 CSS에서 상태를 찾습니다." }))];
-    if (!list.length) return [row("찾은 상태", el("span", { class: "xp-sub", text: "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없어 기본 모습 한 장만 내보냅니다." }))];
-    return [row("찾은 상태", el("div", { class: "xp-checks xp-states" },
-      el("label", { class: "xp-check is-fixed", title: "기본 상태는 늘 첫 칸입니다" }, el("input", { type: "checkbox", checked: "", disabled: "" }), el("span", { text: "기본" })),
+    const tip = "CSS에서 찾은 상태(:hover, [aria-pressed] 등)를 상태마다 다시 렌더합니다.\n기본과 똑같아 보이는 상태는 내보낼 때 뺍니다.\n미리보기 위 타임라인에서 상태를 골라 볼 수 있습니다.";
+    if (!detected || !list.length) return row("상태", el("span", { class: "xp-hint", text: detected ? "없음 (기본 한 장)" : "찾는 중…" }), null, tip);
+    return row("상태", el("div", { class: "xp-checks xp-states" },
+      el("label", { class: "xp-check is-fixed", title: "기본 상태는 늘 첫 칸" }, el("input", { type: "checkbox", checked: "", disabled: "" }), el("span", { text: "기본" })),
       ...list.map((s) => {
         const c = check(s.label, s.include !== false, (on) => { s.include = on; changed(); });
-        c.title = s.tokens.map((t) => t.kind === "pseudo" ? `:${t.name}` : t.kind === "attr" ? `[${t.name}="${t.value}"]` : `.${t.name}`).join(" + ") + ` → ${s.key}`;
+        c.title = s.tokens.map((x) => x.kind === "pseudo" ? `:${x.name}` : x.kind === "attr" ? `[${x.name}="${x.value}"]` : `.${x.name}`).join(" + ") + ` → ${s.key}`;
         return c;
-      })),
-      el("span", { class: "xp-sub", text: `CSS에서 찾은 상태를 상태마다 다시 렌더합니다(${frameCount()}칸). 기본과 똑같이 보이는 상태는 내보낼 때 뺍니다. 상태를 눈으로 보려면 미리보기 아래 타임라인에서 고르세요.` }))];
+      })), null, tip);
   }
 
   function targetNote() {
-    if (spec.target.kind === "root") return el("span", { class: "xp-sub", text: "body 전체를 찍습니다." });
+    if (spec.target.kind === "root") return null;
     const elx = ctx.resolve(spec.target.path);
-    return el("span", { class: "xp-sub" }, el("code", { text: spec.target.label || "(요소)" }),
-      elx ? " · 계층에서 다른 요소를 고르면 대상이 따라 바뀝니다." : " · 이 요소를 찾지 못했습니다. 다시 고르세요.");
+    return el("code", { class: "xp-target" + (elx ? "" : " is-lost"), text: elx ? (spec.target.label || "(요소)") : `${spec.target.label || "요소"} — 찾지 못함` });
   }
 
   let players = [];
@@ -228,7 +228,7 @@ export function initExport(ctx) {
     demo.style.width = `${Math.round(m === "three-v" ? w : Math.max(w * 2.5, w + 120))}px`;
     demo.style.height = `${Math.round(m === "three-h" ? h : Math.max(h * 1.8, h + 60))}px`;
     demo.style.resize = m === "three-h" ? "horizontal" : m === "three-v" ? "vertical" : "both";
-    return el("div", { class: "xp-stretch-wrap" }, el("p", { class: "xp-sub", text: "늘려 보기: 모서리를 끌면 엔진에서 늘어나는 모습과 같습니다. 모서리가 일그러지면 인셋을 키우세요." }),
+    return el("div", { class: "xp-stretch-wrap", title: "오른쪽 아래 모서리를 끌어 늘려 보세요. 엔진에서 늘어나는 모습과 같습니다. 모서리가 일그러지면 인셋을 키우세요." }, el("p", { class: "xp-hint", text: "늘려 보기 ↘" }),
       el("div", { class: "xp-stretch-stage ui-checkerboard" }, demo));
   }
 
@@ -242,7 +242,7 @@ export function initExport(ctx) {
     const dir = spec.output.dir || defaultDir;
     foot.replaceChildren(...[
       ctx.isDirty() ? el("p", { class: "xp-dirty", text: "저장하지 않은 CSS 변경도 화면 그대로 내보냅니다." }) : null,
-      el("p", { class: "xp-summary" }, `${k > 1 && spec.output.layout === "sheet" ? "시트 " : ""}PNG ${files}장 + JSON ${files}개 (${k > 1 ? `${k}칸 · ` : ""}${spec.scales.map((x) => `${x}x`).join("·")}) → `, el("code", { text: dir })),
+      el("p", { class: "xp-summary", title: dir }, `${k > 1 && spec.output.layout === "sheet" ? "시트 " : ""}PNG ${files}장 + JSON ${files}개 (${k > 1 ? `${k}칸 · ` : ""}${spec.scales.map((x) => `${x}x`).join("·")}) → `, el("code", { text: "…\\" + dir.split(/[\\/]/).filter(Boolean).slice(-2).join("\\") })),
       el("div", { class: "xp-actions" },
         el("button", { type: "button", class: "primary ui-primary xp-go", text: busy ? "내보내는 중…" : "내보내기", disabled: busy || null, onclick: doExport }),
         lastExport ? el("span", { class: `xp-last${justDone ? " done" : ""}`, text: `${justDone ? "완료" : "마지막"} ${String(lastExport.at).slice(5, 16).replace("T", " ")} · ${lastExport.files.length}개 파일` }) : null,
@@ -275,7 +275,7 @@ export function initExport(ctx) {
     const r = estimateInsets(target, ctx.frameWin());
     spec.slice.insets = r.insets;
     estimateNote = r.reason;
-    if (announce) changed();
+    if (announce) { changed(); setStatus(`인셋 추정: ${r.reason}`); }
   }
 
   // ---------- 미리보기 위 안내선 ----------
@@ -349,10 +349,14 @@ export function initExport(ctx) {
 
   // ---------- 작은 UI 부품(스타일 탭과 같은 이름-값 두 열) ----------
   function section(title, rows) { return el("section", { class: "xp-sec" }, el("h3", { class: "sect", text: title }), el("div", { class: "xp-rows" }, ...rows)); }
-  function row(name, control, sub) { return el("div", { class: "xp-row" }, el("span", { class: "xp-name", text: name }), el("div", { class: "xp-val" }, control, sub ?? null)); }
+  /** 이름 - 값 한 줄. tip은 마우스를 올리면 뜨는 설명(이름에 점선 밑줄) */
+  function row(name, control, sub = null, tip = "") {
+    return el("div", { class: "xp-row", title: tip || null },
+      el("span", { class: "xp-name" + (tip ? " has-tip" : ""), text: name }), el("div", { class: "xp-val" }, control, sub ?? null));
+  }
   const ARIA = { target: "찍을 것", background: "배경", bounds: "범위", slice: "자르기", fill: "가운데", size: "크기", layout: "형태", fps: "초당 프레임" };
-  function seg(key, options, value, on) {
-    return el("div", { class: "xp-seg", role: "radiogroup", "aria-label": ARIA[key] ?? key },
+  function seg(key, options, value, on, variant = "") {
+    return el("div", { class: "xp-seg" + (variant ? ` is-${variant}` : ""), role: "radiogroup", "aria-label": ARIA[key] ?? key },
       ...options.map(([v, t]) => el("button", { type: "button", role: "radio", "aria-checked": String(v === value), "data-xp": `${key}-${v}`, text: t,
         onclick: () => { if (v !== value) on(v); } })));
   }
@@ -406,7 +410,7 @@ export function initExport(ctx) {
     },
     animation() { return spec?.animation || null; },
     /** 편집기가 지금 미리보기의 애니메이션을 다시 읽었다(애니메이션 줄의 안내 문구만 갱신) */
-    animDetected() { if (active && spec) { const s = pane.querySelector('[data-xp="chk-CSS 애니메이션을 프레임으로 찍기"]')?.closest(".xp-sec"); if (s) s.replaceWith(section("애니메이션", animRows())); } },
+    animDetected() { if (active && spec) { const r = pane.querySelector(".xp-anim")?.closest(".xp-row"); if (r) r.replaceWith(animRow()); } },
     /** 타임라인의 fps 고르기(사용자가 바꾼 것이라 되돌리기 기록에 넣음) */
     setAnimationFps(fps) { if (!spec) return; spec.animation = { ...(spec.animation || { enabled: true, maxFrames: 120 }), fps }; changed(); },
     /** 편집기가 CSS에서 상태를 다시 찾았다(불러올 때·CSS를 고칠 때). 사용자가 바꾼 것이 아니라 되돌리기 기록에는 넣지 않는다. */

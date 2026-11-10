@@ -244,6 +244,7 @@ html,body{margin:0;background:#202020}
 .btn:focus-visible{cursor:pointer}
 .btn.is-gone{display:none}
 .btn:not(:disabled):active{transform:scale(.9)}
+.btn.is-ring{outline:5px solid #ffffff;outline-offset:0}
 </style></head><body><button class="btn" type="button" aria-pressed="false"></button></body></html>`;
 
 test("내보내기: 상태별로 다시 렌더해 시트 한 장 + frameTags, 기본과 같은 상태·찍을 수 없는 상태는 뺀다", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {
@@ -290,6 +291,17 @@ test("내보내기: 상태별로 다시 렌더해 시트 한 장 + frameTags, �
     assert.equal(pv.status, 200, pv.text);
     assert.deepEqual(pv.json.previews[0].frames.map((f) => f.key), ["normal", "hover"]);
     assert.match(pv.json.previews[0].frames[1].urls[0], /^data:image\/png;base64,/);
+    // 그려진 범위가 상태마다 달라도(바깥 테두리) 칸 크기는 같게: 상자를 같은 자리에 두고 투명하게 덧붙임
+    const ring = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "ink", animation: false,
+        states: [{ key: "ring", label: "테두리", tokens: [tok("class", "is-ring", [".btn"])] }] }, write: false } });
+    assert.equal(ring.status, 200, ring.text);
+    assert.deepEqual(ring.json.previews[0].frames.map((f) => [f.key, f.size.w, f.size.h]), [["normal", 70, 40], ["ring", 70, 40]]);
+    assert.deepEqual(ring.json.previews[0].box, { x: 5, y: 5, w: 60, h: 30 });
+    assert.ok(!ring.json.warnings.some((w) => /크기가 기본과 다릅니다/.test(w)), ring.json.warnings.join(" / "));
+    const n0 = decodePng(Buffer.from(ring.json.previews[0].frames[0].urls[0].split(",")[1], "base64"));
+    assert.equal(px(n0, 2, 2)[3], 0, "기본 칸의 덧붙인 가장자리는 투명");
+    assert.deepEqual(px(n0, 35, 20).slice(0, 3), [0x33, 0xaa, 0x66], "기본 칸 안의 버튼은 같은 자리");
     // 9-slice 최소 크기: transform: scale()이 걸린 상태(누름)도 같은 크기로 줄인다
     const nine = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
       spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "box", slice: { mode: "nine", insets: { l: 6, t: 6, r: 6, b: 6 } },

@@ -2,8 +2,8 @@
 
 import { mkdirSync, existsSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { encodePng } from "./png.mjs";
-import { packSheet } from "./pack.mjs";
+import { encodePng, createImage } from "./png.mjs";
+import { packSheet, blit } from "./pack.mjs";
 import { buildSheetData } from "./formats.mjs";
 import { expandFrames, scaleSuffix } from "./spec.mjs";
 
@@ -42,6 +42,7 @@ export async function buildExport({ capture, url, spec, viewport, source, warnin
       shots.push({ ...st, shot });
     }
     if (states === all) states = shots.map(({ shot, ...st }) => st);
+    alignStates(shots);
     const normal = shots[0].shot;
     for (const s of shots.slice(1)) {
       if (s.shot.image.width !== normal.image.width || s.shot.image.height !== normal.image.height) {
@@ -91,6 +92,32 @@ export async function buildExport({ capture, url, spec, viewport, source, warnin
     else for (const s of shots) write([s], s.shot.frames.length > 1 ? `${spec.name}_${s.state}-sheet` : `${spec.name}_${s.state}`);
   }
   return { files, previews, warnings: [...warnings] };
+}
+
+/**
+ * 상태마다 그려진 범위가 달라도(포커스 테두리가 밖으로 나옴, 누름에서 안쪽이 줄어듦) 칸 크기를 같게 맞춘다.
+ * 요소 상자 크기가 모든 상태에서 같을 때만: 상자를 같은 자리에 두고, 사방으로 가장 많이 넘친 만큼씩 투명하게 덧붙인다.
+ * 9-slice 인셋에도 덧붙인 만큼을 더한다. 상자 크기부터 다르면(상태가 레이아웃을 바꿈) 그대로 두고 경고에 맡긴다.
+ */
+function alignStates(shots) {
+  if (shots.length < 2) return;
+  const b0 = shots[0].shot.box;
+  if (!shots.every((s) => s.shot.box.w === b0.w && s.shot.box.h === b0.h)) return;
+  const ext = (s) => { const { box: b, image: im } = s.shot; return { l: b.x, t: b.y, r: im.width - b.x - b.w, b: im.height - b.y - b.h }; };
+  const E = shots.map(ext).reduce((m, e) => ({ l: Math.max(m.l, e.l), t: Math.max(m.t, e.t), r: Math.max(m.r, e.r), b: Math.max(m.b, e.b) }));
+  const W = E.l + b0.w + E.r, H = E.t + b0.h + E.b;
+  for (const s of shots) {
+    const e = ext(s), dx = E.l - e.l, dy = E.t - e.t;
+    if (!dx && !dy && s.shot.image.width === W && s.shot.image.height === H) continue;
+    const pad = (im) => { const out = createImage(W, H); blit(out, im, dx, dy); return out; };
+    s.shot.frames = s.shot.frames.map((fr) => ({ ...fr, image: pad(fr.image) }));
+    s.shot.image = s.shot.frames[0].image;
+    s.shot.box = { x: E.l, y: E.t, w: b0.w, h: b0.h };
+    if (s.shot.insets) {
+      const i = s.shot.insets;
+      s.shot.insets = { l: i.l && i.l + dx, t: i.t && i.t + dy, r: i.r && i.r + (E.r - e.r), b: i.b && i.b + (E.b - e.b) };
+    }
+  }
 }
 
 /** 프레임 묶음이 크기·픽셀까지 모두 같은가 */
