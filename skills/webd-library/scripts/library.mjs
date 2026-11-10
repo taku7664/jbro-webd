@@ -170,37 +170,48 @@ function buttonAttributes(raw) {
     .map(([, name, double, single, bare]) => [name.toLowerCase(), double ?? single ?? bare ?? ""]));
 }
 
+// 규칙: 조작 요소(버튼·링크·입력·role/tabindex로 조작되는 요소)가 문서 전체에서 정확히 하나이고,
+// 그 하나가 버튼처럼 누르는 컨트롤(button, a[href], input 버튼형, role=button|link)이며 숨겨져 있지 않아야 한다.
+// 글자·배지·장식 요소는 버튼 안팎 어디에 있어도 된다. 버튼을 여러 개 늘어놓은 상태 비교 화면만 막는다.
+const VOID_TAGS = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"]);
+const isHiddenAttrs = (attrs) => attrs.has("hidden") || attrs.has("inert") || attrs.get("aria-hidden")?.toLowerCase() === "true";
+/** 조작 요소의 종류: "press"(버튼처럼 누르는 것), "other"(그 밖의 조작), null(조작 요소 아님) */
+function controlKind(tag, attrs) {
+  const role = (attrs.get("role") ?? "").toLowerCase();
+  if (tag === "button") return "press";
+  if (tag === "a") return attrs.has("href") ? "press" : null;
+  if (tag === "input") {
+    const type = (attrs.get("type") ?? "text").toLowerCase();
+    if (type === "hidden") return null;
+    return ["button", "submit", "reset", "image"].includes(type) ? "press" : "other";
+  }
+  if (["select", "textarea", "summary", "iframe"].includes(tag)) return "other";
+  if (role === "button" || role === "link") return "press";
+  if (/^(checkbox|radio|switch|menuitem|option|tab|slider|textbox|combobox)$/.test(role)) return "other";
+  if (attrs.has("tabindex") || attrs.has("contenteditable") && attrs.get("contenteditable") !== "false") return "other";
+  return null;
+}
 function isSingleButton(html) {
-  // 속성값 속의 <button>이나 CSS·JS 예제 문자열은 조작 요소로 세지 않는다.
+  // 속성값 속의 <button>이나 CSS·JS 예제 문자열, <template> 견본은 조작 요소로 세지 않는다.
   const source = html.replace(new RegExp(
     String.raw`<!--[\s\S]*?(?:-->|$)|<(script|style|title|template)${TAG_ATTRS}>[\s\S]*?</\1\s*>|</?[a-z][\w:-]*${TAG_ATTRS}>`, "gi",
   ), (tag, inert) => inert || tag.startsWith("<!--") ? "" : tag);
-  const shell = new RegExp(String.raw`^\s*(?:<!doctype[^>]*>\s*)?(?:<html${TAG_ATTRS}>\s*)?(?:<head${TAG_ATTRS}>[\s\S]*?</head\s*>\s*)?`, "i");
-  const content = source.replace(shell, "").replace(/<\/html\s*>\s*$/i, "").trim();
-  const body = new RegExp(String.raw`^<body${TAG_ATTRS}>([\s\S]*?)(?:</body\s*>)?$`, "i").exec(content);
-  const isHidden = attrs => attrs.has("hidden") || attrs.has("inert") || attrs.get("aria-hidden")?.toLowerCase() === "true";
-  const isInteractive = attrs => attrs.has("tabindex") || attrs.has("contenteditable") && attrs.get("contenteditable") !== "false"
-    || /^(button|link|checkbox|radio|switch|menuitem|option|tab)$/i.test(attrs.get("role") ?? "");
-  if (body && isHidden(buttonAttributes(body[1]))) return false;
-  let fragment = (body?.[2] ?? content).trim();
-  const wrapper = new RegExp(String.raw`^<(div|main|section|span|center)${TAG_ATTRS}>([\s\S]*)</\1\s*>$`, "i");
-  for (let m; (m = wrapper.exec(fragment));) {
-    const attrs = buttonAttributes(m[2]);
-    if (isHidden(attrs) || isInteractive(attrs)) return false;
-    fragment = m[3].trim();
+  const controls = [];
+  const stack = [];   // [{ tag, hidden }] 열린 요소. 숨긴 조상 아래 컨트롤은 숨겨진 것으로 본다.
+  for (const [, slash, rawName, raw] of source.matchAll(new RegExp(String.raw`<(/?)([a-z][\w:-]*)${TAG_ATTRS}>`, "gi"))) {
+    const tag = rawName.toLowerCase();
+    if (slash) {   // 닫는 태그: 짝이 되는 열린 요소까지 닫는다(짝이 없으면 무시)
+      const at = stack.map((e) => e.tag).lastIndexOf(tag);
+      if (at >= 0) stack.length = at;
+      continue;
+    }
+    const attrs = buttonAttributes(raw);
+    const hidden = isHiddenAttrs(attrs) || stack.some((e) => e.hidden);
+    const kind = controlKind(tag, attrs);
+    if (kind) controls.push({ kind, hidden });
+    if (!VOID_TAGS.has(tag) && !/\/\s*$/.test(raw)) stack.push({ tag, hidden });
   }
-  const input = new RegExp(String.raw`^<input${TAG_ATTRS}>$`, "i").exec(fragment);
-  if (input) {
-    const attrs = buttonAttributes(input[1]);
-    return !isHidden(attrs) && ["button", "submit", "reset", "image"].includes(attrs.get("type")?.toLowerCase());
-  }
-  const control = new RegExp(String.raw`^<(button|a)${TAG_ATTRS}>([\s\S]*)</\1\s*>$`, "i").exec(fragment);
-  if (!control) return false;
-  const attrs = buttonAttributes(control[2]);
-  if (isHidden(attrs) || control[1].toLowerCase() === "a" && !attrs.has("href")) return false;
-  const tags = control[3].matchAll(new RegExp(String.raw`</?([a-z][\w:-]*)${TAG_ATTRS}>`, "gi"));
-  const interactive = new Set(["button", "a", "input", "select", "textarea", "summary", "iframe"]);
-  return ![...tags].some(([, name, raw]) => interactive.has(name.toLowerCase()) || isInteractive(buttonAttributes(raw)));
+  return controls.length === 1 && controls[0].kind === "press" && !controls[0].hidden;
 }
 
 // ---------- 명령 ----------
@@ -225,7 +236,7 @@ export function save(lib, o) {
   if (source.includes("\0")) throw Object.assign(usage("라이브러리에는 UTF-8 HTML만 저장합니다."), { status: 422 });
   const html = ensureDocument(source, name);
   if (category === "button" && !isSingleButton(html)) {
-    throw Object.assign(usage("button 분류는 조작 컨트롤 하나만 저장합니다. 상태 비교 화면이나 주변 설명을 떼고 버튼 또는 CTA 링크만 저장하세요."), { status: 422 });
+    throw Object.assign(usage("button 분류는 조작 컨트롤 하나만 저장합니다(버튼·링크 하나). 글자·배지·장식 요소는 함께 둘 수 있지만, 버튼을 여러 개 늘어놓은 상태 비교 화면이나 입력칸이 섞인 조각은 다른 분류로 저장하세요."), { status: 422 });
   }
 
   mkdirSync(lib, { recursive: true });

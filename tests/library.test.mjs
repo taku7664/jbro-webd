@@ -45,27 +45,39 @@ test("button 저장은 상태 비교 화면을 거절하고 라이브러리를 �
   assert.equal(existsSync(lib), false);
 });
 
-test("button 저장은 단일 CTA와 내부 아이콘을 허용하고 별도 컨트롤·설명을 거절한다", () => {
+test("button 저장은 조작 컨트롤 하나면 글자·장식 요소를 함께 허용하고, 컨트롤이 둘 이상이거나 없으면 거절한다", () => {
   const lib = freshLib();
-  const cta = '<div style="padding: 12px"><a href="/help" data-note="<button>"><svg aria-hidden="true"><path d="M0 0"/></svg>도움말</a></div>';
-  assert.equal(save(lib, { file: part(cta), name: "CTA", category: "button" }).meta.category, "button");
-  const native = '<style>button::before {content:"<button>"}</style><!-- <button> --><button><span>확인</span></button><script>const example = "<button>";</script>';
-  assert.equal(save(lib, { file: part(native), name: "확인", category: "button" }).meta.category, "button");
-  for (const html of [
+  const allowed = [
+    '<div style="padding: 12px"><a href="/help" data-note="<button>"><svg aria-hidden="true"><path d="M0 0"/></svg>도움말</a></div>',
+    '<style>button::before {content:"<button>"}</style><!-- <button> --><button><span>확인</span></button><script>const example = "<button>";</script>',
     '<button>확인</button><p>상태 안내</p>',
+    '<button>확인</button><p>본문 밖 설명</p></button>',
+    // 편집기에서 장식·라벨을 덧붙인 슬롯 버튼
+    '<button class="slot"><span class="art"><span class="plate"></span><span class="bar"></span></span></button><div class="label"><span>장비 무게</span></div><span class="badge" aria-hidden="true">3</span>',
+    '<div class="cta"><input type="submit" value="보내기"><small>무료</small></div>',
+    '<div role="button" tabindex="0">역할 버튼</div><p>설명</p>',
+  ];
+  for (const [i, html] of allowed.entries()) {
+    assert.equal(save(lib, { file: part(html), name: `허용 ${i}`, category: "button" }).meta.category, "button", html);
+  }
+  for (const html of [
+    '<main><h1>슬롯 상태</h1><figure><button>기본</button></figure><figure><button disabled>호버</button></figure></main>',
     '<button>기본</button><button hidden>선택</button>',
     '<button>확인<input type="text"></button>',
     '<button>확인<span role="button" tabindex="0">다른 조작</span></button>',
-    '<button>확인</button><p>본문 밖 설명</p></button>',
+    '<button>확인</button><a href="/x">더 보기</a>',
+    '<label>이름 <input type="text"></label>',
     '<a data-note="href=/demo">조작 불가</a>',
+    '<p>컨트롤 없는 설명</p>',
     '<template><button>견본</button></template>',
     '<div hidden><button>숨김</button></div>',
+    '<div aria-hidden="true"><span><button>숨김</button></span></div>',
   ]) {
-    assert.throws(() => save(lib, { file: part(html), name: "예제", category: "button" }), /컨트롤 하나/);
+    assert.throws(() => save(lib, { file: part(html), name: "예제", category: "button" }), /컨트롤 하나/, html);
   }
   const menu = '<nav aria-label="분류"><button>무기</button><button>장비</button></nav>';
   assert.equal(save(lib, { file: part(menu), name: "분류 메뉴", category: "nav" }).meta.category, "nav");
-  assert.equal(loadEntries(lib).length, 3);
+  assert.equal(loadEntries(lib).length, allowed.length + 1);
 });
 
 test("스프라이트 PNG와 HTML로 이름만 바꾼 바이너리는 등록하지 않는다", () => {
