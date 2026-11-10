@@ -30,12 +30,12 @@
 
 <main class="work">
   <nav class="mobile-views" aria-label="편집 영역 전환">
-    <button type="button" data-view="tree" aria-pressed="true">구조</button>
+    <button type="button" data-view="tree" aria-pressed="true">계층</button>
     <button type="button" data-view="preview" aria-pressed="false">미리보기</button>
-    <button type="button" data-view="style" aria-pressed="false">인스펙터</button>
+    <button type="button" data-view="style" aria-pressed="false">스타일</button>
   </nav>
   <aside class="tree-panel" aria-label="HTML 요소 트리">
-    <div class="tree-heading"><button type="button" id="tree-add" class="tree-add" title="만들기·붙여넣기 (오른쪽 클릭과 같은 메뉴)" aria-label="요소 만들기" aria-haspopup="menu">+</button><h2>하이라키</h2><span id="tree-count"></span></div>
+    <div class="tree-heading"><button type="button" id="tree-add" class="tree-add" title="만들기·붙여넣기 (오른쪽 클릭과 같은 메뉴)" aria-label="요소 만들기" aria-haspopup="menu">+</button><h2>계층</h2><span id="tree-count"></span></div>
     <div id="tree" class="tree-scroll" role="tree" aria-label="컴포넌트 본문 요소"></div>
   </aside>
   <section class="stage-wrap" aria-label="미리보기">
@@ -53,9 +53,9 @@
     </div>
   </section>
 
-  <aside class="panel" aria-label="스타일 인스펙터">
+  <aside class="panel" aria-label="스타일">
     <div class="tabs" role="tablist">
-      <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules">인스펙터</button>
+      <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules">스타일</button>
       <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css">CSS 원문</button>
       <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export">내보내기</button>
     </div>

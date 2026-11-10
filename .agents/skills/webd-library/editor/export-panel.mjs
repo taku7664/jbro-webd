@@ -70,7 +70,7 @@ export function initExport(ctx) {
         row("찍을 것", seg("target", [["root", "조각 전체"], ["element", "고른 요소"]], spec.target.kind, (v) => {
           if (v === "element") {
             const sel = ctx.selected();
-            if (!sel) { setStatus("하이라키에서 요소를 먼저 고르세요."); render(); return; }
+            if (!sel) { setStatus("계층에서 요소를 먼저 고르세요."); render(); return; }
             spec.target = { kind: "element", path: ctx.pathOf(sel), label: ctx.label(sel) };
           } else spec.target = { kind: "root" };
           changed();
@@ -122,7 +122,7 @@ export function initExport(ctx) {
     if (spec.target.kind === "root") return el("span", { class: "xp-sub", text: "body 전체를 찍습니다." });
     const elx = ctx.resolve(spec.target.path);
     return el("span", { class: "xp-sub" }, el("code", { text: spec.target.label || "(요소)" }),
-      elx ? " · 하이라키에서 다른 요소를 고르면 대상이 따라 바뀝니다." : " · 이 요소를 찾지 못했습니다. 다시 고르세요.");
+      elx ? " · 계층에서 다른 요소를 고르면 대상이 따라 바뀝니다." : " · 이 요소를 찾지 못했습니다. 다시 고르세요.");
   }
 
   function renderResult() {
@@ -273,7 +273,7 @@ export function initExport(ctx) {
     return d;
   }
 
-  // ---------- 작은 UI 부품(인스펙터와 같은 이름-값 두 열) ----------
+  // ---------- 작은 UI 부품(스타일 탭과 같은 이름-값 두 열) ----------
   function section(title, rows) { return el("section", { class: "xp-sec" }, el("h3", { class: "sect", text: title }), el("div", { class: "xp-rows" }, ...rows)); }
   function row(name, control, sub) { return el("div", { class: "xp-row" }, el("span", { class: "xp-name", text: name }), el("div", { class: "xp-val" }, control, sub ?? null)); }
   const ARIA = { target: "찍을 것", background: "배경", bounds: "범위", slice: "자르기", fill: "가운데", size: "크기" };
@@ -306,7 +306,7 @@ export function initExport(ctx) {
   return {
     show() { active = true; needDraw = true; overlay.hidden = false; if (spec) { render(); schedulePreview(0); } },
     hide() { active = false; overlay.hidden = true; clearTimeout(previewTimer); },
-    /** 하이라키·미리보기에서 요소를 고름 */
+    /** 계층·미리보기에서 요소를 고름 */
     selectionChanged(sel) {
       if (!spec || !active || spec.target.kind !== "element" || !sel) return;
       const path = ctx.pathOf(sel);

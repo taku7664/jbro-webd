@@ -255,7 +255,7 @@ $("frame").addEventListener("load", () => {
   }).observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["id", "class"] });
 });
 
-// ---------- 구조 편집(유니티 하이라키처럼) ----------
+// ---------- 구조 편집(유니티 Hierarchy처럼) ----------
 // 잘라내기·복사·붙여넣기·자식으로 붙여넣기·복제·삭제·이름 바꾸기(클래스)·만들기·빈 부모 만들기·맨 앞/뒤로.
 // model(원문을 읽은 문서)을 고치고 미리보기 body를 model로 바꿔 끼운다. 되돌리기 한 칸 = 구조 변경 한 번.
 
@@ -343,7 +343,7 @@ function copySelected(cut = false) {
   const live = S.selected && S.selected !== doc?.body && S.selected.isConnected ? S.selected : null;
   // 구조 편집을 막은 컴포넌트도 복사는 된다(화면에 보이는 요소 그대로). 잘라내기는 구조 편집이 필요하다.
   const m = S.struct.ok ? selectedModel() : live;
-  if (!m || !live) { flash("복사할 요소를 하이라키에서 고르세요(body는 복사하지 않습니다)."); return; }
+  if (!m || !live) { flash("복사할 요소를 계층에서 고르세요(body는 복사하지 않습니다)."); return; }
   if (cut && !S.struct.ok) { flash(S.struct.reason); return; }
   const ancestors = []; for (let n = live.parentElement; n; n = n.parentElement) ancestors.push(n);
   // 토큰은 복사한 요소의 클래스(없으면 id, 그것도 없으면 :root) 안에만 담아 붙여넣은 곳의 토큰을 덮어쓰지 않는다
@@ -437,9 +437,9 @@ function setTextAt(path, text) {
   mutate("element-text", () => { m.textContent = text; return { select: m }; }, { label: label(m) });
 }
 
-/** 하이라키에서 이름(클래스) 바꾸기 입력. Enter·포커스 해제 = 확정, Esc = 취소 */
+/** 계층에서 이름(클래스) 바꾸기 입력. Enter·포커스 해제 = 확정, Esc = 취소 */
 function startRename(path) {
-  // 구조를 바꾼 직후면 하이라키를 다시 그리는 일(MutationObserver)이 먼저 끝난 뒤 입력칸을 띄운다
+  // 구조를 바꾼 직후면 계층을 다시 그리는 일(MutationObserver)이 먼저 끝난 뒤 입력칸을 띄운다
   if (!S.struct.ok || !path) return;
   setTimeout(() => startRenameNow(path), 0);
 }
@@ -489,7 +489,7 @@ function openMenu(x, y, target) {
     [isBody ? "텍스트 만들기" : "자식 텍스트 만들기", "", () => createElement("text", path), false],
     [isBody ? "버튼 만들기" : "자식 버튼 만들기", "", () => createElement("button", path), false],
   ];
-  menuEl = el("div", { class: "ctx-menu", role: "menu", "aria-label": isBody ? "하이라키" : label(target) });
+  menuEl = el("div", { class: "ctx-menu", role: "menu", "aria-label": isBody ? "계층" : label(target) });
   if (!can) menuEl.append(el("p", { class: "ctx-note", text: S.struct.reason }));
   for (const it of items) {
     if (!it) { menuEl.append(el("div", { class: "ctx-sep", role: "separator" })); continue; }
@@ -968,14 +968,14 @@ const TEXT_INPUT = /^(text|search|number|url|email|tel)$/;
 const isTextField = (t) => t?.tagName === "TEXTAREA" || (t?.tagName === "INPUT" && TEXT_INPUT.test(t.type));
 document.addEventListener("focusin", (e) => { if (isTextField(e.target)) e.target._focusValue = e.target.value; }, true);
 
-// 하이라키 빈 곳 오른쪽 클릭과 + 버튼: 최상위(body)에 만들기·붙여넣기
+// 계층 빈 곳 오른쪽 클릭과 + 버튼: 최상위(body)에 만들기·붙여넣기
 $("tree").addEventListener("contextmenu", (e) => { if (e.defaultPrevented) return; e.preventDefault(); openMenu(e.clientX, e.clientY, doc?.body); });
 $("tree-add").addEventListener("click", (e) => {
   const r = e.currentTarget.getBoundingClientRect();
   openMenu(r.left, r.bottom + 4, S.selected && S.selected.isConnected ? S.selected : doc?.body);
 });
 
-/** 하이라키 단축키(유니티와 같은 조합). 글자 칸에서 고치는 중이거나 화면 글자를 드래그해 골랐으면 브라우저 기본 동작을 둔다. */
+/** 계층 단축키(유니티와 같은 조합). 글자 칸에서 고치는 중이거나 화면 글자를 드래그해 골랐으면 브라우저 기본 동작을 둔다. */
 function hierarchyKey(e, typing) {
   if (typing || menuEl) return false;
   const k = e.key.toLowerCase(), mod = e.ctrlKey || e.metaKey;

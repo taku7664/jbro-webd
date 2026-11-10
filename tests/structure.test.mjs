@@ -1,4 +1,4 @@
-// 하이라키 구조 편집(복사·붙여넣기·만들기)의 텍스트 도구 시험. 브라우저 동작은 편집기에서 직접 확인한다.
+// 계층 구조 편집(복사·붙여넣기·만들기)의 텍스트 도구 시험. 브라우저 동작은 편집기에서 직접 확인한다.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
