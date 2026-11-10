@@ -9,6 +9,7 @@
 </head>
 <body>
 <header class="top ui-top">
+  <a id="back" class="back ui-chrome-control" href="/lib/" hidden>← 라이브러리</a>
   <div class="title">
     <h1 id="name" class="ui-title">불러오는 중…</h1>
     <p class="sub ui-meta"><code id="cid"></code> · <span id="ver"></span></p>
@@ -40,12 +41,14 @@
   <section class="stage-wrap" aria-label="미리보기">
     <div class="legend" aria-hidden="true">
       <span class="stage-caption"><span id="preview-bg">조각 원본 배경</span> · <output id="preview-size"></output></span>
-      <span><i class="lg-m"></i>margin</span><span><i class="lg-b"></i>border</span><span><i class="lg-p"></i>padding</span><span><i class="lg-c"></i>content</span>
+      <span class="lg-box"><i class="lg-m"></i>margin</span><span class="lg-box"><i class="lg-b"></i>border</span><span class="lg-box"><i class="lg-p"></i>padding</span><span class="lg-box"><i class="lg-c"></i>content</span>
+      <span class="lg-xp"><i class="lg-target"></i>내보낼 범위</span><span class="lg-xp"><i class="lg-guide"></i>인셋(끌어서 조절)</span>
     </div>
     <div class="stage" id="stage">
       <div class="canvas" id="canvas">
         <iframe id="frame" title="컴포넌트 미리보기"></iframe>
         <div class="overlay" id="overlay" aria-hidden="true"></div>
+        <div class="xp-overlay" id="xp-overlay" hidden></div>
       </div>
     </div>
   </section>
@@ -54,6 +57,7 @@
     <div class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules">인스펙터</button>
       <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css">CSS 원문</button>
+      <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export">내보내기</button>
     </div>
     <div class="pane" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
       <p class="hint" id="hint">왼쪽 HTML 요소 트리에서 대상을 고르거나, 상단의 ‘요소 선택’을 켜고 미리보기에서 고르세요. 값을 고치면 바로 반영되고, 저장해야 파일에 남습니다.</p>
@@ -63,6 +67,7 @@
       <p class="hint">컴포넌트의 &lt;style&gt; 원문입니다. 고치는 대로 미리보기에 반영됩니다.</p>
       <div id="blocks"></div>
     </div>
+    <div class="pane xp-pane" id="pane-export" role="tabpanel" aria-labelledby="tab-export" hidden></div>
   </aside>
 </main>
 

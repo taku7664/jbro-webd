@@ -17,7 +17,8 @@
 //   remove <id>
 //   index
 //   path
-//   edit   <id> [--port <번호>] [--no-open]   브라우저에서 CSS를 직접 고치고 저장하는 로컬 편집 서버 (Ctrl+C로 닫음)
+//   open   [--port <번호>] [--no-open]        라이브러리 서버를 열고 목록을 띄움. 카드를 누르면 편집기, 편집기에서 내보내기 (Ctrl+C로 닫음)
+//   edit   <id> [--port <번호>] [--no-open]   같은 서버를 열고 그 항목의 편집기를 바로 띄움
 //
 // 종료 코드: 0 성공 · 1 사용 오류 · 3 대상 없음
 
@@ -388,22 +389,25 @@ function main() {
       }
       case "index": console.log(writeIndex(lib)); return 0;
       case "path": console.log(lib); return 0;
+      case "open":
       case "edit": {
-        const id = o._[0];
-        if (!id || !existsSync(join(lib, id, "meta.json"))) { console.error(`없는 항목: ${id ?? "(id 없음)"}`); return 3; }
+        const id = cmd === "edit" ? o._[0] : null;
+        if (cmd === "edit" && (!id || !existsSync(join(lib, id, "meta.json")))) { console.error(`없는 항목: ${id ?? "(id 없음)"}`); return 3; }
         const port = o.port ? Number(o.port) : 0;
         if (!Number.isInteger(port) || port < 0 || port > 65535) throw usage("--port는 0~65535 정수입니다.");
-        import("./editor-server.mjs").then(({ startEditor }) => startEditor({ lib, id, port })).then((ed) => {
-          console.log(`편집 서버: ${ed.url}`);
-          console.log("  화면에서 저장하면 새 버전으로 저장되고 이전 파일은 history/에 남습니다. 닫으려면 Ctrl+C.");
-          if (!o.noOpen) openBrowser(ed.url);
-          const stop = () => ed.close().then(() => { console.log("편집 서버를 닫았습니다."); process.exit(0); });
+        import("./editor-server.mjs").then(({ startLibrary }) => startLibrary({ lib, port })).then((srv) => {
+          const target = id ? srv.editUrl(id) : srv.url;
+          console.log(`라이브러리 서버: ${srv.url}`);
+          if (id) console.log(`편집기: ${target}`);
+          console.log("  목록에서 카드를 누르면 편집기가 열립니다. 저장하면 새 버전이 되고 이전 파일은 history/에 남습니다. 닫으려면 Ctrl+C.");
+          if (!o.noOpen) openBrowser(target);
+          const stop = () => srv.close().then(() => { console.log("서버를 닫았습니다."); process.exit(0); });
           process.on("SIGINT", stop); process.on("SIGTERM", stop);
-        }).catch((e) => { console.error(`편집 서버를 열지 못함: ${e.message}`); process.exit(e.code === 3 ? 3 : 1); });
+        }).catch((e) => { console.error(`서버를 열지 못함: ${e.message}`); process.exit(e.code === 3 ? 3 : 1); });
         return 0;
       }
       default:
-        console.error("명령: save | list | show <id> | remove <id> | index | path | edit <id>  (자세한 옵션은 파일 머리 주석)");
+        console.error("명령: save | list | show <id> | remove <id> | index | path | open | edit <id>  (자세한 옵션은 파일 머리 주석)");
         return 1;
     }
   } catch (e) { console.error(e.message); return e.code ?? 1; }

@@ -6,6 +6,7 @@ import {
   parseCss, setDecl, insertDecl, styleBlocks, replaceStyleBlocks, specificity, cmpSpec, splitSelectors,
   varRefs, countVarUses, nudge, lineOf,
 } from "./css-model.mjs";
+import { initExport } from "./export-panel.mjs";
 
 const $ = (id) => document.getElementById(id);
 /** 로컬 시간대 오프셋을 붙인 ISO 문자열(library.mjs의 localIso와 같은 형식) */
@@ -26,9 +27,10 @@ const collapsed = new Set();
 
 // ---------- 서버 ----------
 
+// 토큰은 주소의 ?t= 또는 서버가 남긴 쿠키(목록에서 넘어온 경우)로 확인한다.
 function api(path = "", opt = {}) {
   return fetch(`/api/${encodeURIComponent(ID)}${path}`, {
-    ...opt, headers: { "x-webd-token": TOKEN, "content-type": "application/json" }, cache: "no-store",
+    ...opt, headers: { ...(TOKEN ? { "x-webd-token": TOKEN } : {}), "content-type": "application/json" }, cache: "no-store",
   });
 }
 
@@ -36,6 +38,7 @@ async function load() {
   const r = await api();
   if (!r.ok) { banner(`불러오지 못했습니다 (${r.status}). 터미널에 나온 주소로 다시 여세요.`); return; }
   const d = await r.json();
+  $("back").hidden = !d.library;
   S.meta = d.meta; S.source = d.html; S.hash = d.hash; S.conflict = false;
   $("canvas").classList.toggle("ui-checkerboard", !d.meta.background);
   $("preview-bg").textContent = d.meta.background ? "조각 원본 배경" : "투명 배경";
@@ -99,7 +102,7 @@ function scheduleDraft() {
 }
 
 function listen() {
-  const es = new EventSource(`/api/${encodeURIComponent(ID)}/events?t=${encodeURIComponent(TOKEN)}`);
+  const es = new EventSource(`/api/${encodeURIComponent(ID)}/events${TOKEN ? `?t=${encodeURIComponent(TOKEN)}` : ""}`);
   es.onmessage = (ev) => {
     let d; try { d = JSON.parse(ev.data); } catch { return; }
     if (!d.hash || d.hash === S.hash) return;
@@ -154,8 +157,15 @@ function redo() {
 const norm = (s) => String(s).replace(/\r\n?/g, "\n");
 function applyStyles() {
   if (!S.editable) return;
-  styleEls.forEach((el, i) => { if (norm(el.textContent) !== norm(S.styles[i])) el.textContent = S.styles[i]; });
+  let changed = false;
+  styleEls.forEach((el, i) => { if (norm(el.textContent) !== norm(S.styles[i])) { el.textContent = S.styles[i]; changed = true; } });
   needDraw = true;
+  if (changed) exp?.stylesChanged();
+}
+/** 지금 화면 그대로의 문서(저장 안 한 CSS 변경 포함). 내보내기가 쓴다. */
+function currentHtml() {
+  if (!S.source) throw new Error("아직 조각을 불러오지 못했습니다.");
+  return S.editable ? replaceStyleBlocks(S.source, S.styles) : S.source;
 }
 
 function setupViewports(vp) {
@@ -190,6 +200,7 @@ $("frame").addEventListener("load", () => {
   win.addEventListener("resize", () => { needDraw = true; });
   S.selected = S.selPath ? resolvePath(S.selPath) : null;
   renderTree(); renderPanel(); renderBlocks(); updateState();
+  exp?.frameLoaded();
   new MutationObserver(() => {
     if (S.selected && !S.selected.isConnected) { S.selected = null; S.selPath = null; needDraw = true; renderPanel(); }
     else if (S.selected) S.selPath = pathOf(S.selected);
@@ -208,7 +219,9 @@ function select(el, focusTree = false) {
   renderTree();
   if (focusTree && !matchMedia("(max-width: 760px)").matches) $("tree").querySelector('[aria-selected="true"] > .tree-row > .tree-pick')?.focus();
   if (matchMedia("(max-width: 760px)").matches) showMobilePane("style");
-  showTab("rules"); renderPanel();
+  // 내보내기 탭을 보는 중이면 탭을 바꾸지 않고 내보내기 대상만 따라 바꾼다
+  if (currentTab === "export") exp?.selectionChanged(el); else showTab("rules");
+  renderPanel();
 }
 
 function renderTree() {
@@ -600,14 +613,28 @@ function showMobilePane(which) {
 for (const button of document.querySelectorAll(".mobile-views button")) button.onclick = () => showMobilePane(button.dataset.view);
 showMobilePane("tree");
 
+let currentTab = "rules";
 function showTab(which) {
-  for (const [t, p] of [["tab-rules", "pane-rules"], ["tab-css", "pane-css"]]) {
+  for (const [t, p] of [["tab-rules", "pane-rules"], ["tab-css", "pane-css"], ["tab-export", "pane-export"]]) {
     const on = t === `tab-${which}`; $(t).setAttribute("aria-selected", String(on)); $(p).hidden = !on;
   }
+  currentTab = which;
+  document.body.classList.toggle("mode-export", which === "export");
   if (which === "css") renderBlocks();
+  if (which === "export") exp?.show(); else exp?.hide();
+  const hash = which === "export" ? "#export" : "";
+  if (location.hash !== hash) history.replaceState(null, "", location.pathname + location.search + hash);
 }
 $("tab-rules").onclick = () => showTab("rules");
 $("tab-css").onclick = () => showTab("css");
+$("tab-export").onclick = () => showTab("export");
+
+const exp = ID ? initExport({
+  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(),
+  selected: () => (S.selected && S.selected.isConnected ? S.selected : null),
+  pathOf, label, resolve: (p) => (doc ? resolvePath(p) : null),
+  frameDoc: () => doc, frameWin: () => win,
+}) : null;
 $("pick").onclick = () => { S.pick = !S.pick; $("pick").setAttribute("aria-pressed", String(S.pick)); S.hovered = null; needDraw = true; };
 $("all").onclick = () => { S.all = !S.all; $("all").setAttribute("aria-pressed", String(S.all)); needDraw = true; };
 $("undo").onclick = undo; $("redo").onclick = redo; $("save").onclick = () => save();
@@ -623,5 +650,8 @@ function onKey(e) {
 document.addEventListener("keydown", onKey);
 addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
 
-if (!TOKEN || !ID) banner("주소에 편집 토큰이 없습니다. library.mjs edit 명령이 알려 준 주소로 여세요.");
-else { load(); listen(); }
+if (!ID) banner("주소에 편집할 항목이 없습니다. library.mjs open으로 연 목록에서 카드를 고르세요.");
+else {
+  load().then(() => { if (location.hash === "#export") showTab("export"); });
+  listen();
+}

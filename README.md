@@ -7,7 +7,7 @@ Codex와 Claude Code에서 쓰는 웹·게임 UI 디자인 스킬 **WebD**와, U
 | 스킬 | 하는 일 |
 |---|---|
 | `webd` | 웹·게임 UI의 스타일을 정하고 조각별로 제작·검토한 뒤 화면을 조립합니다. 디자인 비평, 접근성 검사, 스타일 사양과 측정 도구를 제공합니다. |
-| `webd-library` | UI 조각을 단독 HTML로 저장, 목록 페이지에서 미리보기·검색·기간 필터·정렬, 브라우저에서 CSS 직접 편집·저장, 다른 프로젝트에 옮겨 쓰기 |
+| `webd-library` | UI 조각을 단독 HTML로 저장, 목록 페이지에서 미리보기·검색·기간 필터·정렬, 카드를 눌러 브라우저에서 CSS 직접 편집·저장, 게임용 스프라이트 내보내기(PNG + Aseprite 호환 JSON, 9-slice·3-slice), 다른 프로젝트에 옮겨 쓰기 |
 
 ## 생각
 
@@ -68,11 +68,13 @@ skills/webd/
 skills/webd-library/
   SKILL.md             저장·목록·재사용·삭제 절차
   scripts/
-    library.mjs        save / list / show / remove / index / path / edit
+    library.mjs        save / list / show / remove / index / path / open / edit
     gallery.mjs        목록 페이지(index.html) 생성
-    editor-server.mjs  CSS 편집용 로컬 서버 (127.0.0.1 전용)
+    editor-server.mjs  목록·편집기·내보내기 로컬 서버 (127.0.0.1 전용)
+    export/            스프라이트 내보내기: spec·capture(헤드리스 렌더)·png·pack·formats·run
   editor/
     editor.html, editor.css, editor-app.mjs   편집 화면
+    export-panel.mjs   편집기의 내보내기 탭
     css-model.mjs      CSS 원문을 자리만 고치는 모델 (화면·테스트 공용)
 docs/
   sources.md           참고 자료와 차용 범위
@@ -175,7 +177,8 @@ node skills/webd/tools/serve-image-tokens.mjs
 node skills/webd-library/scripts/library.mjs save --file part.html --name "가격 표" --category table --tags 가격,구독
 node skills/webd-library/scripts/library.mjs list --sort updated --since 2026-10-01 --until 2026-10-31
 node skills/webd-library/scripts/library.mjs index      # 목록 페이지 다시 만들기
-node skills/webd-library/scripts/library.mjs edit <id>  # CSS 편집 화면 열기 (Ctrl+C로 닫음)
+node skills/webd-library/scripts/library.mjs open       # 라이브러리 서버: 목록에서 카드를 누르면 편집기 (Ctrl+C로 닫음)
+node skills/webd-library/scripts/library.mjs edit <id>  # 같은 서버를 열고 그 조각의 편집기를 바로 띄움
 ```
 
 - 컴포넌트마다 `component.html`(단독으로 열림)과 `meta.json`(이름, 분류, 태그, 저장·수정 시각, 출처, 미리보기 크기, 원래 배경색 `background`)을 둡니다.
@@ -187,7 +190,7 @@ node skills/webd-library/scripts/library.mjs edit <id>  # CSS 편집 화면 열�
 
 ### CSS 편집
 
-Codex에서는 `edit <id> --no-open`으로 `127.0.0.1` 편집 서버를 띄우고 내부 브라우저로 엽니다. 목록 카드의 편집 버튼에서 명령을 복사할 수 있습니다. 사용자가 버전을 확정하면 조각 ID와 함께 기록합니다.
+Codex에서는 `open --no-open`(또는 `edit <id> --no-open`)으로 `127.0.0.1` 라이브러리 서버를 띄우고 내부 브라우저로 엽니다. 서버로 연 목록에서는 카드를 누르면 편집기가 열리고, 파일로 연 `index.html`에서는 편집 명령을 복사합니다. 사용자가 버전을 확정하면 조각 ID와 함께 기록합니다.
 목록과 편집기는 `skills/webd-library/editor/theme.css`의 색·서체·공통 작업 막대·표면·주 버튼 스타일을 함께 사용합니다. 목록은 `index` 생성 시 이 CSS를 HTML에 포함합니다.
 편집기 하이라키의 요소 아이콘은 Lucide Static 1.71.0에서 필요한 SVG만 로컬 자산으로 포함했습니다. 라이선스는 `skills/webd-library/editor/LUCIDE-LICENSE.txt`에 있습니다.
 
@@ -202,6 +205,14 @@ Codex에서는 `edit <id> --no-open`으로 `127.0.0.1` 편집 서버를 띄우�
 - **저장**: 고치는 대로 미리보기에 반영되고, "저장"(Ctrl+S)을 눌러야 새 버전으로 저장됩니다(`save --id`와 같은 경로, history 유지). 원문은 다시 쓰지 않고 바꾼 자리만 고쳐서 주석·들여쓰기가 그대로 남습니다. 되돌리기·다시 실행을 지원합니다.
 - **편집 중인 내용 보존**. 화면에서 저장 안 한 변경은 `<id>/.draft.json`에 남습니다. 말로 받은 피드백을 반영하기 전에 그 파일을 확인하고, 수정본을 `save --id <id> --file <수정 HTML>`로 저장합니다. 편집기가 새 버전을 감지해 다시 불러오며 저장 안 한 변경이 있으면 먼저 묻습니다. 그새 파일이 바뀌었으면 저장을 멈추고 덮어쓸지 묻습니다.
 - 한계: `style` 속성(인라인 스타일)과 바깥 CSS 파일은 화면에서 고치지 않습니다. 스크립트가 `<style>`을 더하거나 바꾸는 컴포넌트는 편집을 막습니다.
+
+### 스프라이트 내보내기
+
+편집기의 **내보내기** 탭에서 조각(또는 하이라키에서 고른 요소)을 게임에서 쓸 PNG와 좌표 JSON으로 내보냅니다. 설치된 Chrome·Edge를 헤드리스로 띄워 다시 렌더하므로 배율(1·2·3·4x)마다 선명하게 나옵니다. 설계와 단계는 [docs/EXPORT-DESIGN.md](docs/EXPORT-DESIGN.md)에 있습니다.
+
+- 지금 되는 것(1단계): 한 장, 9-slice, 3-slice 가로·세로. 인셋은 CSS(테두리·radius·`clip-path` 깎임)에서 추정하거나 미리보기의 점선을 끌어 정하고, 최소 크기로 다시 렌더해 작은 이미지를 만듭니다. 결과 미리보기와 늘려 보기로 확인한 뒤 내보냅니다.
+- 출력: `<라이브러리 실제 경로의 상위>/export/<id>/`(조각마다 다른 폴더 지정 가능). PNG마다 같은 이름의 Aseprite 호환 JSON이 붙고, `meta.webd.engines`에 Unity·Godot·CSS `border-image` 값이 들어 있습니다.
+- 다음 단계: 상태별(hover·pressed·disabled 등), 애니메이션 프레임, 빽빽한 시트 배치와 엔진 가져오기 파일.
 
 ## 테스트
 

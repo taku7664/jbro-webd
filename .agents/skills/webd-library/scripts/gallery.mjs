@@ -37,7 +37,12 @@ const ESC = { "<": "\\u003c", "\u2028": "\\u2028", "\u2029": "\\u2029" };
 function embed(obj) { return JSON.stringify(obj).replace(/[<\u2028\u2029]/g, (c) => ESC[c]); }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]); }
 
-export function renderGallery(entries, { libPath, generatedAt, categories, cli = "library.mjs" }) {
+/**
+ * @param {object} o
+ * @param {boolean} [o.server]  라이브러리 서버(/lib/)가 내주는 목록이면 true: 카드를 누르면 편집기가 열린다.
+ *                              false(파일로 연 index.html)면 편집은 명령 복사로 하고, 서버로 여는 방법을 위에 알린다.
+ */
+export function renderGallery(entries, { libPath, generatedAt, categories, cli = "library.mjs", server = false }) {
   const data = entries.map((e) => ({
     id: e.id, name: e.name, description: e.description, category: e.category, tags: e.tags,
     createdAt: e.createdAt, updatedAt: e.updatedAt, versions: e.versions, source: e.source, style: e.style,
@@ -98,7 +103,8 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
   .frame:not(.ui-checkerboard) { background: var(--panel); }
   .frame iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; pointer-events: none; }
   .frame.ui-checkerboard iframe { color-scheme: light; }
-  .body { padding: 14px 16px 16px; display: grid; gap: 6px; flex: 1; }
+  .body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .body > .actions { margin-top: auto; padding-top: 8px; }
   .name { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.35; }
   .name a { text-decoration: none; }
   .name a:hover { text-decoration: underline; }
@@ -110,9 +116,16 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
                   border-radius: 3px; padding: 1px 7px; cursor: pointer; }
   .chips button[data-kind="category"] { border-color: var(--accent); color: var(--accent); }
   .chips button:hover { background: var(--bg); }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .actions a, .actions button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; text-decoration: none; }
   .actions .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .frame-link { display: block; color: inherit; cursor: pointer; }
+  .frame-link:hover .frame { box-shadow: inset 0 0 0 2px var(--accent); }
+  .frame-link:focus-visible { outline-offset: -2px; }
+  .actions .quiet { margin-left: auto; align-self: center; padding: 6px 2px; font-weight: 400; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+  .serve-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding: 10px 14px; font-size: 13px; }
+  .serve-note code { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+  .serve-note button { font: inherit; font-size: 12px; font-weight: 600; padding: 4px 10px; }
   .empty { margin: 48px 0; color: var(--muted); }
   .empty strong { display: block; color: var(--text); font-size: 18px; margin-bottom: 4px; }
   .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--text); color: var(--bg);
@@ -137,7 +150,9 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
     <h1 class="ui-title">컴포넌트 라이브러리</h1>
     <p class="where ui-meta"><span id="total"></span> · 생성 <time>${esc(generatedAt.slice(0, 16).replace("T", " "))}</time> · <code>${esc(libPath)}</code></p>
   </header>
-
+${server ? "" : `  <p class="serve-note ui-surface" id="serve-note">파일로 연 목록이라 카드를 눌러 바로 편집할 수 없습니다. 터미널에서 이 명령을 실행하면 카드를 누르는 대로 편집기가 열립니다.
+    <code>${esc(`node "${cli}" open`)}</code><button type="button" class="ui-control" id="copy-open">명령 복사</button></p>
+`}
   <form class="bar ui-surface" id="bar" role="search" onsubmit="return false">
     <label class="q">검색<input id="q" class="ui-control" type="search" placeholder="이름, 설명, 태그" autocomplete="off"></label>
     <label>분류<select id="category" class="ui-control"><option value="">전체</option>${categories.map((c) => `<option value="${c}">${CATEGORY_LABEL[c] ?? c}</option>`).join("")}</select></label>
@@ -171,7 +186,10 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
 (() => {
   const DATA = JSON.parse(document.getElementById("data").textContent);
   const LABEL = ${JSON.stringify(CATEGORY_LABEL)};
+  const SERVER = ${server ? "true" : "false"};
   const EDIT_CMD = (id) => ${embed(`node "${cli}" edit `)} + JSON.stringify(id) + ${embed(` --lib "${libPath}"`)};
+  const OPEN_CMD = ${embed(`node "${cli}" open --lib "${libPath}"`)};
+  const editHref = (id) => "/edit/" + encodeURIComponent(id);
   const $ = (id) => document.getElementById(id);
   const els = { q: $("q"), category: $("category"), tag: $("tag"), from: $("from"), to: $("to"), sort: $("sort") };
   const KEY = "webd-library-view";
@@ -243,14 +261,25 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
       d.updatedAt !== d.createdAt ? el("li", {}, "수정 ", el("time", { datetime: d.updatedAt, text: stamp(d.updatedAt) })) : null,
       d.versions > 1 ? el("li", { text: "버전 " + d.versions }) : null,
       d.source && d.source.project ? el("li", { text: "출처 " + d.source.project }) : null);
-    const actions = el("div", { class: "actions" },
-      el("a", { class: "primary ui-primary", href, target: "_blank", rel: "noopener", text: "열기" }),
-      el("button", { type: "button", class: "ui-control", text: "편집", title: "CSS 편집 서버를 여는 명령을 복사합니다", onclick: () => copy(EDIT_CMD(d.id), "편집 명령을 복사했습니다. 터미널에 붙여 넣으면 편집 화면이 열립니다.") }),
+    const copyButtons = [
       el("button", { type: "button", class: "ui-control", text: "HTML 복사", onclick: () => copy(d.html, "HTML을 복사했습니다") }),
-      el("button", { type: "button", class: "ui-control", text: "ID 복사", onclick: () => copy(d.id, "ID를 복사했습니다: " + d.id) }));
-    return el("article", { class: "item ui-surface" }, frame,
+      el("button", { type: "button", class: "ui-control", text: "ID 복사", onclick: () => copy(d.id, "ID를 복사했습니다: " + d.id) })];
+    const actions = SERVER
+      ? el("div", { class: "actions" },
+          el("a", { class: "primary ui-primary ui-control", href: editHref(d.id), text: "편집" }),
+          el("a", { class: "ui-control", href: editHref(d.id) + "#export", text: "내보내기" }),
+          ...copyButtons,
+          el("a", { class: "quiet", href, target: "_blank", rel: "noopener", text: "원본" }))
+      : el("div", { class: "actions" },
+          el("a", { class: "primary ui-primary ui-control", href, target: "_blank", rel: "noopener", text: "열기" }),
+          el("button", { type: "button", class: "ui-control", text: "편집 명령 복사", title: "CSS 편집 서버를 여는 명령을 복사합니다", onclick: () => copy(EDIT_CMD(d.id), "편집 명령을 복사했습니다. 터미널에 붙여 넣으면 편집 화면이 열립니다.") }),
+          ...copyButtons);
+    const mainHref = SERVER ? editHref(d.id) : href;
+    const linkAttrs = SERVER ? { href: mainHref } : { href: mainHref, target: "_blank", rel: "noopener" };
+    return el("article", { class: "item ui-surface" },
+      el("a", { class: "frame-link", ...linkAttrs, tabindex: "-1", "aria-hidden": "true" }, frame),
       el("div", { class: "body" },
-        el("h3", { class: "name" }, el("a", { href, target: "_blank", rel: "noopener", text: d.name })),
+        el("h3", { class: "name" }, el("a", { ...linkAttrs, text: d.name, title: SERVER ? "편집기에서 열기" : "새 탭에서 열기" })),
         d.description ? el("p", { class: "desc", text: d.description }) : null,
         bgMode === "neutral" ? origBg(d.background) : null,
         chips, facts, actions));
@@ -300,6 +329,7 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
     document.body.classList.toggle("neutral", bgMode === "neutral");
     update();
   });
+  if ($("copy-open")) $("copy-open").addEventListener("click", () => copy(OPEN_CMD, "명령을 복사했습니다. 터미널에 붙여 넣으세요."));
   $("reset").addEventListener("click", () => { els.q.value = ""; els.category.value = ""; els.tag.value = ""; els.from.value = ""; els.to.value = ""; els.sort.value = "created:desc"; update(); });
   update();
 })();

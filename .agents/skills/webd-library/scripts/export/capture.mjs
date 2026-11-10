@@ -1,0 +1,197 @@
+// capture.mjs — 조각을 헤드리스 Chrome·Edge로 렌더해 투명 PNG로 찍는다. 설계: docs/EXPORT-DESIGN.md 4·5절.
+//
+// 한 번 띄운 브라우저를 재사용하고, 요청은 차례로(큐) 처리한다. 찍는 순서:
+//   화면 크기·배율 → (투명이면) 기본 배경 알파 0 → 문서 열기 → 폰트 대기·애니메이션 0초로 정지
+//   → 대상 표시 + 고립 스타일 → (9·3-slice) 틀만 남기기·최소 크기로 다시 렌더 → 상자 재기 → 캡처 → (ink) 투명 여백 트림
+
+import { decodePng } from "./png.mjs";
+import { alphaBounds, crop } from "./pack.mjs";
+import { findBrowser, launch, connect } from "../../../webd/scripts/render-check.mjs";
+
+export const BLEED = 64;          // ink 범위에서 상자 밖으로 더 찍는 폭(CSS px): 그림자·광채용
+export const CENTER_MIN = 4;      // 최소 크기 9-slice의 가운데 폭(CSS px)
+
+export class CaptureError extends Error {
+  constructor(message, status = 500) { super(message); this.status = status; }
+}
+
+/** 브라우저 안에서 도는 준비 함수. 바깥 변수를 쓰지 않는다. */
+async function preparePage(arg) {
+  const warnings = [];
+  await document.fonts.ready;
+  for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = 0; } catch {} }
+  let target = document.body;
+  if (arg.target.kind === "element") {
+    let el = document.documentElement;
+    for (const i of arg.target.path) { el = el && el.children[i]; }
+    if (!el || el === document.documentElement) return { error: "대상 요소를 찾지 못했습니다. 편집기에서 대상을 다시 고르세요." };
+    target = el;
+  }
+  target.setAttribute("data-webd-target", "");
+  let css = "";
+  if (arg.transparent) css += "html,body{background:transparent!important;background-color:transparent!important}";
+  if (target !== document.body) {
+    css += "body *:not([data-webd-target]):not([data-webd-target] *){visibility:hidden!important}[data-webd-target]{visibility:visible!important}";
+  }
+  if (arg.frameOnly) {
+    css += "[data-webd-target] *{visibility:hidden!important}" +
+      "[data-webd-target]{-webkit-text-fill-color:transparent!important;text-shadow:none!important;caret-color:transparent!important}";
+  }
+  const st = document.createElement("style"); st.id = "webd-export-style"; st.textContent = css;
+  document.head.append(st);
+
+  const before = target.getBoundingClientRect();
+  // 최소 크기로 줄이면 고정 여백을 가진 장식(::before·::after, 절대 위치 자식)이 폭·높이 0이 되어 사라질 수 있다. 줄이기 전후를 비교한다.
+  const parts = () => {
+    const out = [];
+    const els = [target, ...target.querySelectorAll("*")].slice(0, 300);
+    for (const el of els) for (const pseudo of [null, "::before", "::after"]) {
+      if (pseudo && getComputedStyle(el, pseudo).content === "none") continue;
+      if (!pseudo && el === target) continue;
+      const cs = getComputedStyle(el, pseudo);
+      if (cs.display === "none" || cs.visibility === "hidden") continue;
+      out.push({ name: (el === target ? "대상" : el.tagName.toLowerCase() + (el.classList[0] ? "." + el.classList[0] : "")) + (pseudo ?? ""),
+        w: parseFloat(cs.width) || 0, h: parseFloat(cs.height) || 0 });
+    }
+    return out;
+  };
+  const partsBefore = arg.resize ? parts() : [];
+  if (arg.resize) {
+    const want = { w: arg.resize.w ?? before.width, h: arg.resize.h ?? before.height };
+    const set = (k, v) => target.style.setProperty(k, v, "important");
+    set("box-sizing", "border-box");
+    if (arg.resize.w != null) { set("width", want.w + "px"); set("min-width", "0"); set("max-width", "none"); set("flex", "none"); }
+    if (arg.resize.h != null) { set("height", want.h + "px"); set("min-height", "0"); set("max-height", "none"); }
+    const got = target.getBoundingClientRect();
+    if (Math.abs(got.width - want.w) > 0.5 || Math.abs(got.height - want.h) > 0.5) {
+      for (const k of ["box-sizing", "width", "min-width", "max-width", "flex", "height", "min-height", "max-height"]) target.style.removeProperty(k);
+      warnings.push(`최소 크기(${want.w}×${want.h})로 줄여지지 않아 원래 크기로 찍었습니다(최소 폭·높이 지정이나 레이아웃 제약). 인셋은 그대로 씁니다.`);
+    } else {
+      const after = parts();
+      const lost = partsBefore.filter((p, i) => (p.w > 0.5 && p.h > 0.5) && after[i] && (after[i].w <= 0.5 || after[i].h <= 0.5)).map((p) => p.name);
+      if (lost.length) warnings.push(`최소 크기에서 장식이 사라졌습니다: ${[...new Set(lost)].slice(0, 4).join(", ")}. 인셋을 키우거나 크기를 '원래'로 바꾸세요.`);
+    }
+  }
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  const r = target === document.body && arg.rootBox
+    ? { x: 0, y: 0, width: arg.rootBox.w, height: arg.rootBox.h }
+    : target.getBoundingClientRect();
+  const doc = document.documentElement;
+  return {
+    rect: { x: r.x + scrollX, y: r.y + scrollY, w: r.width, h: r.height },
+    doc: { w: Math.max(doc.scrollWidth, innerWidth), h: Math.max(doc.scrollHeight, innerHeight) },
+    label: target.tagName.toLowerCase() + (target.id ? "#" + target.id : "") + (target.classList.length ? "." + [...target.classList].slice(0, 3).join(".") : ""),
+    warnings,
+  };
+}
+
+export function createCapturer({ browserPath } = {}) {
+  let session = null;   // { browser, cdp }
+  let queue = Promise.resolve();
+
+  async function open() {
+    if (session) return session;
+    const exe = browserPath ?? findBrowser();
+    if (!exe) throw new CaptureError("내보내기에 쓸 Chrome·Edge를 찾지 못했습니다. 설치하거나 환경변수 WEBD_BROWSER에 실행 파일 경로를 지정하세요.", 503);
+    const browser = await launch(exe);
+    try {
+      const cdp = await connect(browser.port);
+      await cdp.send("Page.enable"); await cdp.send("Runtime.enable");
+      session = { browser, cdp };
+      return session;
+    } catch (e) { await browser.close().catch(() => {}); throw e; }
+  }
+
+  async function reset() {
+    const s = session; session = null;
+    if (s) { try { s.cdp.close(); } catch {} await s.browser.close().catch(() => {}); }
+  }
+
+  /**
+   * @param {{ url: string, spec: object, scale: number, viewport: { width, height } }} job
+   * @returns {Promise<{ image, box: {x,y,w,h}, insets: {l,t,r,b}|null, cssBox: {w,h}, label, warnings: string[] }>}
+   */
+  async function captureOnce({ url, spec, scale, viewport }) {
+    const { cdp } = await open();
+    const vw = Math.max(16, Math.round(viewport?.width || 1200)), vh = Math.max(16, Math.round(viewport?.height || 720));
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: vh, deviceScaleFactor: scale, mobile: false });
+    if (spec.background === "transparent") await cdp.send("Emulation.setDefaultBackgroundColorOverride", { color: { r: 0, g: 0, b: 0, a: 0 } });
+    else await cdp.send("Emulation.setDefaultBackgroundColorOverride", {});
+    const loaded = cdp.once("Page.loadEventFired", 20000);
+    const nav = await cdp.send("Page.navigate", { url });
+    if (nav.errorText) throw new CaptureError(`조각을 열지 못했습니다: ${nav.errorText}`);
+    await loaded;
+
+    const slice = spec.slice.mode !== "none";
+    const ins = spec.slice.insets;
+    let resize = null;
+    if (slice && spec.slice.size === "compact" && spec.slice.fill === "stretch") {
+      resize = {
+        w: spec.slice.mode === "three-v" ? null : ins.l + ins.r + CENTER_MIN,
+        h: spec.slice.mode === "three-h" ? null : ins.t + ins.b + CENTER_MIN,
+      };
+    }
+    const pre = [];
+    if (slice && spec.slice.size === "compact" && spec.slice.fill === "tile") pre.push("가운데를 반복(tile)할 때는 반복 무늬를 지키려고 원래 크기로 찍었습니다.");
+    if (slice && spec.target.kind === "root") pre.push("조각 전체(body)를 9·3-slice로 찍었습니다. 틀이 되는 요소를 하이라키에서 골라 대상으로 지정하면 더 정확합니다.");
+    const prep = await cdp.evaluate(preparePage, {
+      target: spec.target, transparent: spec.background === "transparent", frameOnly: slice && spec.slice.frameOnly,
+      resize, rootBox: spec.target.kind === "root" && !resize ? { w: vw, h: vh } : null,
+    });
+    if (prep.error) throw new CaptureError(prep.error, 409);
+    const box = prep.rect;
+    if (box.w < 1 || box.h < 1) throw new CaptureError(`대상(${prep.label})의 크기가 0입니다. 화면에 보이는 요소를 고르세요.`, 409);
+
+    const ink = spec.bounds === "ink";
+    const pad = ink ? BLEED : 0;
+    const clip = { x: Math.max(0, box.x - pad), y: Math.max(0, box.y - pad) };
+    clip.width = Math.min(prep.doc.w + pad, box.x + box.w + pad) - clip.x;
+    clip.height = Math.min(prep.doc.h + pad, box.y + box.h + pad) - clip.y;
+    const shot = await cdp.send("Page.captureScreenshot", { format: "png", clip: { ...clip, scale: 1 }, captureBeyondViewport: true, fromSurface: true });
+    let image = decodePng(Buffer.from(shot.data, "base64"));
+    const ratio = image.width / clip.width;   // 실제 픽셀 배율(= scale이어야 함)
+    // 이미지 좌표의 상자
+    let bx = { x: Math.round((box.x - clip.x) * ratio), y: Math.round((box.y - clip.y) * ratio), w: Math.round(box.w * ratio), h: Math.round(box.h * ratio) };
+    const warnings = [...pre, ...prep.warnings];
+    if (Math.abs(ratio - scale) > 0.01) warnings.push(`캡처 배율이 ${ratio.toFixed(2)}배로 나왔습니다(요청 ${scale}배).`);
+
+    if (ink) {
+      const b = alphaBounds(image);
+      if (!b) throw new CaptureError("찍은 결과가 모두 투명합니다. 대상이 보이는지, '틀만 찍기'가 필요한 내용을 숨기지 않았는지 확인하세요.", 409);
+      image = crop(image, b);
+      bx = { x: bx.x - b.x, y: bx.y - b.y, w: bx.w, h: bx.h };
+    }
+
+    let insets = null;
+    if (slice) {
+      const k = (v) => Math.round(v * ratio);
+      const m = spec.slice.mode;
+      // 상자 기준 인셋에 상자 밖으로 넘친 만큼(그림자 등)을 더한다
+      insets = {
+        l: m === "three-v" ? 0 : Math.max(0, k(ins.l) + bx.x),
+        t: m === "three-h" ? 0 : Math.max(0, k(ins.t) + bx.y),
+        r: m === "three-v" ? 0 : Math.max(0, k(ins.r) + (image.width - bx.x - bx.w)),
+        b: m === "three-h" ? 0 : Math.max(0, k(ins.b) + (image.height - bx.y - bx.h)),
+      };
+      if (insets.l + insets.r >= image.width && m !== "three-v") warnings.push(`좌우 인셋(${insets.l}+${insets.r}px)이 이미지 폭(${image.width}px) 이상이라 가운데가 없습니다.`);
+      if (insets.t + insets.b >= image.height && m !== "three-h") warnings.push(`상하 인셋(${insets.t}+${insets.b}px)이 이미지 높이(${image.height}px) 이상이라 가운데가 없습니다.`);
+    }
+    return { image, box: bx, insets, cssBox: { w: box.w, h: box.h }, label: prep.label, warnings };
+  }
+
+  function capture(job) {
+    const run = queue.then(async () => {
+      try { return await captureOnce(job); }
+      catch (e) {
+        if (e instanceof CaptureError) throw e;
+        await reset();                       // 브라우저가 죽었거나 연결이 끊김: 한 번만 다시 띄워 시도
+        try { return await captureOnce(job); }
+        catch (e2) { if (!(e2 instanceof CaptureError)) await reset(); throw e2 instanceof CaptureError ? e2 : new CaptureError(`캡처 실패: ${e2.message}`); }
+      }
+    });
+    queue = run.catch(() => {});
+    return run;
+  }
+
+  return { capture, close: () => { const q = queue; queue = Promise.resolve(); return q.then(reset, reset); } };
+}
