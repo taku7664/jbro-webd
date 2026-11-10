@@ -86,10 +86,26 @@ test("사양: 기본값, 잘못된 값 거름, 3-slice는 반대 축 인셋 0", 
   assert.ok(normalizeSpec({ slice: { mode: "nine" } }, "x").warnings.some((w) => /인셋이 모두 0/.test(w)));
 });
 
-test("사양: 1단계는 상태·애니메이션을 받되 경고하고 한 프레임만", () => {
-  const { spec, warnings } = normalizeSpec({ states: [{ name: "normal" }, { name: "hover" }], animation: { fps: 24 } }, "x");
-  assert.equal(expandFrames(spec).length, 1);
-  assert.equal(warnings.length, 2);
+test("사양: 상태는 기본 + 켠 상태로 펼치고, 모양이 틀린 항목·옛 형식은 버린다. 애니메이션은 아직 경고", () => {
+  const hover = { key: "hover", label: "호버", tokens: [{ kind: "pseudo", name: "hover", owners: [".btn"] }] };
+  const off = { key: "disabled", label: "비활성", include: false, tokens: [{ kind: "pseudo", name: "disabled", owners: [".btn"] }] };
+  const { spec, warnings } = normalizeSpec({ name: "btn", states: [{ name: "normal" }, hover, off,
+    { key: "bad key!", tokens: [] }, { key: "x", tokens: [{ kind: "eval", name: "x", owners: ["a"] }] }, { key: "y", tokens: [{ kind: "class", name: "y", owners: [] }] }],
+    animation: { fps: 24 } }, "x");
+  assert.deepEqual(spec.states.map((s) => s.key), ["hover", "disabled"]);
+  const frames = expandFrames(spec);
+  assert.deepEqual(frames.map((f) => [f.state, f.filename]), [["normal", "btn_normal"], ["hover", "btn_hover"]]);
+  assert.equal(warnings.length, 1);
+  assert.equal(expandFrames(normalizeSpec({ name: "btn" }, "x").spec)[0].filename, "btn", "상태가 없으면 이름에 꼬리 없음");
+});
+
+test("시트 JSON: 상태마다 frameTags와 meta.webd.states", () => {
+  const { spec } = normalizeSpec({ name: "b" }, "x");
+  const fr = (state, label, x) => ({ filename: `b_${state}`, state, label, cell: { x, y: 0, w: 4, h: 4 }, duration: 100, sourceSize: { w: 4, h: 4 }, spriteSourceSize: { x: 0, y: 0, w: 4, h: 4 } });
+  const d = buildSheetData({ frames: [fr("normal", "기본", 0), fr("hover", "호버", 6)], image: "b-sheet.png", size: { w: 10, h: 4 }, scale: 1, spec, insets: null, source: {} });
+  assert.deepEqual(d.meta.frameTags, [{ name: "normal", from: 0, to: 0, direction: "forward" }, { name: "hover", from: 1, to: 1, direction: "forward" }]);
+  assert.deepEqual(d.meta.webd.states, [{ key: "normal", label: "기본", from: 0, to: 0 }, { key: "hover", label: "호버", from: 1, to: 1 }]);
+  assert.deepEqual(Object.keys(d.frames), ["b_normal", "b_hover"]);
 });
 
 test("사양: 배율 인셋·파일 꼬리·기본 폴더", () => {
@@ -212,6 +228,72 @@ test("항목 하나 서버(startEditor)는 목록을 내주지 않는다", async
     assert.equal((await req(ed.port, "GET", `/lib/?t=${"e".repeat(32)}`)).status, 404);
     assert.equal((await req(ed.port, "GET", `/api/${encodeURIComponent(id)}`, { headers: { "x-webd-token": "e".repeat(32) } })).json.library, false);
   } finally { await ed.close(); }
+});
+
+const BTN = `<!doctype html><html><head><style>
+html,body{margin:0;background:#202020}
+.btn{position:absolute;left:10px;top:10px;width:60px;height:30px;border:0;padding:0;background:#33aa66;transition:background 300ms}
+.btn:not(:disabled):hover{background:#3366aa}
+.btn[aria-pressed="true"]{background:#aa3366}
+.btn[aria-pressed="true"]:hover{background:#ffaa00}
+.btn:disabled{background:#666666}
+.btn:focus-visible{cursor:pointer}
+.btn.is-gone{display:none}
+.btn:not(:disabled):active{transform:scale(.9)}
+</style></head><body><button class="btn" type="button" aria-pressed="false"></button></body></html>`;
+
+test("내보내기: 상태별로 다시 렌더해 시트 한 장 + frameTags, 기본과 같은 상태·찍을 수 없는 상태는 뺀다", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {
+  const lib = join(mkdtempSync(join(work, "st-")), "library");
+  mkdirSync(lib, { recursive: true });
+  const src = join(work, `btn-${Date.now()}.html`); writeFileSync(src, BTN);
+  const { meta } = save(lib, { file: src, name: "상태 버튼", category: "button", viewport: "100x60" });
+  const srv = await startLibrary({ lib, token: "s".repeat(32) });
+  const T = { "x-webd-token": "s".repeat(32) };
+  const tok = (kind, name, owners, value) => ({ kind, name, owners, ...(value != null ? { value } : {}) });
+  const hover = tok("pseudo", "hover", [".btn:not(:disabled)"]);
+  const pressed = tok("attr", "aria-pressed", [".btn"], "true");
+  const states = [
+    { key: "hover", label: "호버", tokens: [hover] },
+    { key: "focus-visible", label: "포커스", tokens: [tok("pseudo", "focus-visible", [".btn"])] },
+    { key: "disabled", label: "비활성", tokens: [tok("pseudo", "disabled", [".btn"])] },
+    { key: "pressed", label: "켜짐", tokens: [pressed] },
+    { key: "pressed+hover", label: "켜짐 + 호버", tokens: [pressed, hover], combo: true },
+    { key: "gone", label: ".is-gone", tokens: [tok("class", "is-gone", [".btn"])] },
+    { key: "skip", label: "끔", include: false, tokens: [tok("class", "is-skip", [".btn"])] },
+  ];
+  try {
+    const r = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "box", scales: [1, 2], states }, write: true } });
+    assert.equal(r.status, 200, r.text);
+    const dir = r.json.dir;
+    assert.deepEqual(readdirSync(dir).sort(), ["btn-sheet.json", "btn-sheet.png", "btn-sheet@2x.json", "btn-sheet@2x.png"]);
+    const j = JSON.parse(readFileSync(join(dir, "btn-sheet.json"), "utf8"));
+    assert.deepEqual(j.meta.frameTags.map((t) => t.name), ["normal", "hover", "disabled", "pressed", "pressed+hover"]);
+    const sheet = decodePng(readFileSync(join(dir, "btn-sheet.png")));
+    const color = (name) => { const f = j.frames[name].frame; assert.equal(f.w, 60); assert.equal(f.h, 30); return px(sheet, f.x + 30, f.y + 15).slice(0, 3); };
+    assert.deepEqual(color("btn_normal"), [0x33, 0xaa, 0x66]);
+    assert.deepEqual(color("btn_hover"), [0x33, 0x66, 0xaa], "전환(300ms) 없이 바로 호버 색");
+    assert.deepEqual(color("btn_disabled"), [0x66, 0x66, 0x66], ":not(:disabled)도 비활성에서는 빠짐");
+    assert.deepEqual(color("btn_pressed"), [0xaa, 0x33, 0x66]);
+    assert.deepEqual(color("btn_pressed+hover"), [0xff, 0xaa, 0x00], "CSS에 있는 조합");
+    assert.ok(j.meta.webd.warnings.some((w) => /"포커스" 상태는 기본과 모습이 같아/.test(w)));
+    assert.ok(j.meta.webd.warnings.some((w) => /".is-gone" 상태는 찍지 못해/.test(w)));
+    const j2 = JSON.parse(readFileSync(join(dir, "btn-sheet@2x.json"), "utf8"));
+    assert.equal(j2.meta.frameTags.length, 5, "뺀 상태는 2배에서도 빠짐");
+    // 미리보기: 상태별 프레임을 한 장씩 돌려준다
+    const pv = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "box", states: states.slice(0, 1) }, write: false } });
+    assert.equal(pv.status, 200, pv.text);
+    assert.deepEqual(pv.json.previews[0].frames.map((f) => f.key), ["normal", "hover"]);
+    assert.match(pv.json.previews[0].frames[1].url, /^data:image\/png;base64,/);
+    // 9-slice 최소 크기: transform: scale()이 걸린 상태(누름)도 같은 크기로 줄인다
+    const nine = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: {
+      spec: { name: "btn", target: { kind: "element", path: [1, 0] }, bounds: "box", slice: { mode: "nine", insets: { l: 6, t: 6, r: 6, b: 6 } },
+        states: [{ key: "active", label: "누름", tokens: [tok("pseudo", "active", [".btn:not(:disabled)"])] }] }, write: false } });
+    assert.equal(nine.status, 200, nine.text);
+    assert.ok(!nine.json.warnings.some((w) => /줄여지지 않아|크기가 기본과 다릅니다/.test(w)), nine.json.warnings.join(" / "));
+    assert.deepEqual(nine.json.previews[0].frames.map((f) => [f.key, f.size.w]), [["normal", 16], ["active", 16]]);
+  } finally { await srv.close(); }
 });
 
 test("내보내기: 실제 브라우저로 투명 PNG·9-slice JSON을 만든다", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {

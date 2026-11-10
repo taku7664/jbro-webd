@@ -229,8 +229,13 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
               spec: preview ? { ...spec, scales: [spec.scales[spec.scales.length - 1]] } : spec,
               source: { id, name: meta.name, version: meta.versions },
             });
+            const { encodePng } = await import("./export/png.mjs");
             const pngData = (name) => "data:image/png;base64," + run.files.find((f) => f.name === name).bytes.toString("base64");
-            const previews = run.previews.map((p) => ({ ...p, url: pngData(p.png) }));
+            // 상태별 프레임도 한 장씩 보여 준다(시트 한 장으로는 어느 칸이 무슨 상태인지 알기 어렵다)
+            const previews = run.previews.map((p) => ({ ...p, url: pngData(p.png), frames: (p.frames || []).map((f) => ({
+              key: f.key, label: f.label, size: { w: f.image.width, h: f.image.height },
+              url: "data:image/png;base64," + encodePng(f.image).toString("base64"),
+            })) }));
             if (preview) return json(res, 200, { preview: true, previews, warnings: run.warnings, files: run.files.map(fileInfo) });
             const out = outputDir(spec, lib, id);
             writeExport(out, run.files);

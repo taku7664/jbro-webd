@@ -28,6 +28,13 @@ export function buildSheetData({ frames, image, size, scale, spec, insets, sourc
     ? frames.map((f) => ({ filename: f.filename, ...entry(f) }))
     : Object.fromEntries(frames.map((f) => [f.filename, entry(f)]));
   const first = frames[0];
+  // 상태마다 태그 하나(Aseprite frameTags). 엔진에서 태그 이름으로 상태별 이미지를 꺼낸다.
+  const frameTags = [];
+  if (frames.length > 1) frames.forEach((f, i) => {
+    const last = frameTags[frameTags.length - 1];
+    if (last && last.name === f.state) last.to = i;
+    else frameTags.push({ name: f.state, from: i, to: i, direction: "forward" });
+  });
   const slices = insets ? [{
     name: spec.name, color: "#0000ffff",
     keys: [{ frame: 0, bounds: { x: 0, y: 0, w: first.sourceSize.w, h: first.sourceSize.h }, center: centerRect(first.sourceSize, insets) }],
@@ -36,9 +43,10 @@ export function buildSheetData({ frames, image, size, scale, spec, insets, sourc
     frames: framesOut,
     meta: {
       app: APP, version: String(FORMAT_VERSION), image, format: "RGBA8888", size: { w: size.w, h: size.h }, scale: String(scale),
-      frameTags: [], layers: [], slices,
+      frameTags, layers: [], slices,
       webd: {
         source,
+        states: frames.length > 1 ? frameTags.map((t) => ({ key: t.name, label: frames[t.from].label ?? t.name, from: t.from, to: t.to })) : null,
         slice: insets ? { mode: spec.slice.mode, fill: spec.slice.fill, insets: { ...insets }, insetsCss: { ...spec.slice.insets } } : null,
         engines: insets ? engineValues(spec, insets, image, scale) : null,
         background: spec.background, bounds: spec.bounds,

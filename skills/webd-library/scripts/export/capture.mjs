@@ -7,6 +7,7 @@
 import { decodePng } from "./png.mjs";
 import { alphaBounds, crop } from "./pack.mjs";
 import { findBrowser, launch, connect } from "../../../webd/scripts/render-check.mjs";
+import { applyWebdState, rewriteStateSelectors } from "../../editor/states.mjs";
 
 export const BLEED = 64;          // ink 범위에서 상자 밖으로 더 찍는 폭(CSS px): 그림자·광채용
 export const CENTER_MIN = 4;      // 최소 크기 9-slice의 가운데 폭(CSS px)
@@ -15,8 +16,8 @@ export class CaptureError extends Error {
   constructor(message, status = 500) { super(message); this.status = status; }
 }
 
-/** 브라우저 안에서 도는 준비 함수. 바깥 변수를 쓰지 않는다. */
-async function preparePage(arg) {
+/** 브라우저 안에서 도는 준비 함수. 바깥 변수를 쓰지 않는다(상태 함수는 helpers로 받음: editor/states.mjs). */
+async function preparePage(arg, applyState, rewriteCss) {
   const warnings = [];
   await document.fonts.ready;
   for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = 0; } catch {} }
@@ -26,6 +27,15 @@ async function preparePage(arg) {
     for (const i of arg.target.path) { el = el && el.children[i]; }
     if (!el || el === document.documentElement) return { error: "대상 요소를 찾지 못했습니다. 편집기에서 대상을 다시 고르세요." };
     target = el;
+  }
+  // 상태: 가상 클래스 선택자를 바꿔 두고(:is(:hover,[data-webd-hover])), 전환 없이 바로 그 모습이 되게 건다
+  if (arg.state?.length) {
+    for (const st of document.querySelectorAll("style")) st.textContent = rewriteCss(st.textContent);
+    const off = document.createElement("style"); off.id = "webd-state-style";
+    off.textContent = "*,*::before,*::after{transition:none!important}";
+    document.head.append(off);
+    applyState(document, arg.state, target);
+    if (!target.isConnected) return { error: "상태를 걸었더니 대상 요소가 사라졌습니다." };
   }
   target.setAttribute("data-webd-target", "");
   let css = "";
@@ -40,7 +50,8 @@ async function preparePage(arg) {
   const st = document.createElement("style"); st.id = "webd-export-style"; st.textContent = css;
   document.head.append(st);
 
-  const before = target.getBoundingClientRect();
+  const rb = target.getBoundingClientRect();
+  const before = target.offsetWidth != null ? { width: target.offsetWidth, height: target.offsetHeight } : rb;   // transform 없는 레이아웃 크기
   // 최소 크기로 줄이면 고정 여백을 가진 장식(::before·::after, 절대 위치 자식)이 폭·높이 0이 되어 사라질 수 있다. 줄이기 전후를 비교한다.
   const parts = () => {
     const out = [];
@@ -62,7 +73,9 @@ async function preparePage(arg) {
     set("box-sizing", "border-box");
     if (arg.resize.w != null) { set("width", want.w + "px"); set("min-width", "0"); set("max-width", "none"); set("flex", "none"); }
     if (arg.resize.h != null) { set("height", want.h + "px"); set("min-height", "0"); set("max-height", "none"); }
-    const got = target.getBoundingClientRect();
+    // 레이아웃 크기로 확인한다(상태가 transform: scale()을 걸어도 줄이기는 된 것). offsetWidth가 없는 SVG 등은 화면 크기로.
+    const r0 = target.getBoundingClientRect();
+    const got = target.offsetWidth != null ? { width: target.offsetWidth, height: target.offsetHeight } : r0;
     if (Math.abs(got.width - want.w) > 0.5 || Math.abs(got.height - want.h) > 0.5) {
       for (const k of ["box-sizing", "width", "min-width", "max-width", "flex", "height", "min-height", "max-height"]) target.style.removeProperty(k);
       warnings.push(`최소 크기(${want.w}×${want.h})로 줄여지지 않아 원래 크기로 찍었습니다(최소 폭·높이 지정이나 레이아웃 제약). 인셋은 그대로 씁니다.`);
@@ -73,9 +86,18 @@ async function preparePage(arg) {
     }
   }
   await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // 찍을 상자는 대상 자신의 transform을 뺀 레이아웃 상자(상태가 scale()로 줄여도 칸 크기는 같게, 줄어든 모습은 그 안에)
+  const layoutRect = () => {
+    const props = ["transform", "translate", "scale", "rotate"];
+    const saved = props.map((p) => [p, target.style.getPropertyValue(p), target.style.getPropertyPriority(p)]);
+    for (const p of props) target.style.setProperty(p, "none", "important");
+    const rr = target.getBoundingClientRect();
+    for (const [p, v, pr] of saved) v ? target.style.setProperty(p, v, pr) : target.style.removeProperty(p);
+    return rr;
+  };
   const r = target === document.body && arg.rootBox
     ? { x: 0, y: 0, width: arg.rootBox.w, height: arg.rootBox.h }
-    : target.getBoundingClientRect();
+    : layoutRect();
   const doc = document.documentElement;
   return {
     rect: { x: r.x + scrollX, y: r.y + scrollY, w: r.width, h: r.height },
@@ -108,10 +130,10 @@ export function createCapturer({ browserPath } = {}) {
   }
 
   /**
-   * @param {{ url: string, spec: object, scale: number, viewport: { width, height } }} job
+   * @param {{ url: string, spec: object, scale: number, viewport: { width, height }, state?: object[] }} job  state: 걸 상태 조각(editor/states.mjs)
    * @returns {Promise<{ image, box: {x,y,w,h}, insets: {l,t,r,b}|null, cssBox: {w,h}, label, warnings: string[] }>}
    */
-  async function captureOnce({ url, spec, scale, viewport }) {
+  async function captureOnce({ url, spec, scale, viewport, state = null }) {
     const { cdp } = await open();
     const vw = Math.max(16, Math.round(viewport?.width || 1200)), vh = Math.max(16, Math.round(viewport?.height || 720));
     await cdp.send("Emulation.setDeviceMetricsOverride", { width: vw, height: vh, deviceScaleFactor: scale, mobile: false });
@@ -136,8 +158,8 @@ export function createCapturer({ browserPath } = {}) {
     if (slice && spec.target.kind === "root") pre.push("조각 전체(body)를 9·3-slice로 찍었습니다. 틀이 되는 요소를 계층에서 골라 대상으로 지정하면 더 정확합니다.");
     const prep = await cdp.evaluate(preparePage, {
       target: spec.target, transparent: spec.background === "transparent", frameOnly: slice && spec.slice.frameOnly,
-      resize, rootBox: spec.target.kind === "root" && !resize ? { w: vw, h: vh } : null,
-    });
+      resize, rootBox: spec.target.kind === "root" && !resize ? { w: vw, h: vh } : null, state,
+    }, applyWebdState, rewriteStateSelectors);
     if (prep.error) throw new CaptureError(prep.error, 409);
     const box = prep.rect;
     if (box.w < 1 || box.h < 1) throw new CaptureError(`대상(${prep.label})의 크기가 0입니다. 화면에 보이는 요소를 고르세요.`, 409);

@@ -76,6 +76,7 @@ skills/webd-library/
     editor.html, editor.css, editor-app.mjs   편집 화면
     export-panel.mjs   편집기의 내보내기 탭
     css-model.mjs      CSS 원문을 자리만 고치는 모델 (화면·테스트 공용)
+    states.mjs         상태 찾기·걸기(편집기 타임라인과 내보내기 공용)
     structure.mjs      계층 구조 편집 도구: body 바꿔 넣기, 복사할 CSS 모으기·붙여넣을 CSS 합치기
 docs/
   sources.md           참고 자료와 차용 범위
@@ -217,9 +218,11 @@ Codex에서는 `open --no-open`(또는 `edit <id> --no-open`)으로 `127.0.0.1` 
 
 편집기의 **내보내기** 탭에서 조각(또는 계층에서 고른 요소)을 게임에서 쓸 PNG와 좌표 JSON으로 내보냅니다. 설치된 Chrome·Edge를 헤드리스로 띄워 다시 렌더하므로 배율(1·2·3·4x)마다 선명하게 나옵니다. 설계와 단계는 [docs/EXPORT-DESIGN.md](docs/EXPORT-DESIGN.md)에 있습니다.
 
-- 지금 되는 것(1단계): 한 장, 9-slice, 3-slice 가로·세로. 인셋은 CSS(테두리·radius·`clip-path` 깎임)에서 추정하거나 미리보기의 점선을 끌어 정하고, 최소 크기로 다시 렌더해 작은 이미지를 만듭니다. 결과 미리보기와 늘려 보기로 확인한 뒤 내보냅니다.
+- 지금 되는 것(1·2단계): 한 장, 9-slice, 3-slice 가로·세로, 상태별. 인셋은 CSS(테두리·radius·`clip-path` 깎임)에서 추정하거나 미리보기의 점선을 끌어 정하고, 최소 크기로 다시 렌더해 작은 이미지를 만듭니다. 결과 미리보기와 늘려 보기로 확인한 뒤 내보냅니다.
+- **상태**: CSS에 상태 규칙(`:hover`·`:active`·`:focus-visible`·`:disabled`·`[aria-pressed="true"]`·`[data-state=…]`·`.is-*`·BEM `--변형`, 그리고 CSS에 있는 조합)이 있으면 자동으로 찾아 상태마다 다시 렌더하고 시트 한 장에 모읍니다(`<이름>-sheet.png`, JSON `meta.frameTags`에 상태 이름). 기본과 똑같이 보이는 상태는 뺍니다. 내보내기 탭에서 상태를 켜고 끄고, 시트 한 장/상태마다 파일을 고릅니다.
+- **타임라인**: 편집기 미리보기 아래 줄에서 상태 칸을 고르면 그 상태가 미리보기에 걸립니다(플래시 버튼의 Up·Over·Down처럼, 저장 안 됨). 고른 요소에만 걸리고, 스타일 탭은 그 상태에 걸리는 규칙을 보여 줍니다. ←·→로 칸을 옮깁니다.
 - 출력: `<라이브러리 실제 경로의 상위>/export/<id>/`(조각마다 다른 폴더 지정 가능). PNG마다 같은 이름의 Aseprite 호환 JSON이 붙고, `meta.webd.engines`에 Unity·Godot·CSS `border-image` 값이 들어 있습니다.
-- 다음 단계: 상태별(hover·pressed·disabled 등), 애니메이션 프레임, 빽빽한 시트 배치와 엔진 가져오기 파일.
+- 다음 단계: 애니메이션 프레임(타임라인 아래 프레임 줄), 빽빽한 시트 배치와 엔진 가져오기 파일.
 
 ## 테스트
 

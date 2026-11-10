@@ -1,6 +1,13 @@
 # 스프라이트 내보내기 설계
 
-작성: 2026-11-10. 상태: **1단계 구현됨**(목록 → 편집기, 내보내기 탭, 한 장·9-slice·3-slice, 배율, PNG + JSON). 2단계(상태별)부터는 아직입니다.
+작성: 2026-11-10. 상태: **2단계까지 구현됨**(1단계: 목록 → 편집기, 내보내기 탭, 한 장·9-slice·3-slice, 배율, PNG + JSON. 2단계: 상태별 시트, 편집기 아래 타임라인의 상태 줄). 3단계(애니메이션 프레임)부터는 아직입니다.
+
+2단계에서 설계와 달라진 점:
+- 상태를 사람이 고르는 대신 **CSS에서 자동으로 찾아 시트에 넣습니다**(사용자 결정, 9절 4). 찾는 것: 가상 클래스 `:hover` `:active` `:focus-visible` `:focus` `:focus-within` `:checked` `:disabled`, 속성 `[aria-*="…"]` `[data-*="…"]` `[disabled]` 등, 문서에 아직 없는 클래스(`.is-*`, BEM `--변형`). 같은 겹합 선택자에 둘 이상 있으면(`[aria-pressed="true"]:hover`) 조합 상태도 만듭니다. `:not(:disabled)` 안의 조건은 상태가 아닙니다.
+- 상태를 거는 방법은 CDP `CSS.forcePseudoState` 대신 **선택자 바꿔 쓰기**입니다. 가상 클래스를 `:is(:hover,[data-webd-hover])`로 바꿔 두고 요소에 `data-webd-hover`를 붙입니다(명시도 같음, 걸지 않으면 원래와 같음). 편집기 미리보기와 내보내기가 같은 함수(`editor/states.mjs`)를 써서, 편집기에서 본 상태와 내보낸 상태가 같습니다. 속성·클래스 상태는 실제로 붙입니다.
+- 상태는 고른 요소(내보내기 대상)와 그 조상·자손에만 겁니다. 목록처럼 같은 요소가 여럿이면 고른 항목만 상태가 바뀝니다.
+- 내보낼 때 `transition`은 끄고 최종 모습을 찍습니다. 기본과 픽셀이 똑같은 상태는 빼고(경고), 찍을 수 없는 상태(대상이 사라짐 등)도 빼고 알립니다. 칸 크기는 대상 자신의 `transform`을 뺀 레이아웃 상자 기준이라, 누름 상태가 `scale()`로 줄어도 칸 크기는 같습니다.
+- 편집기 미리보기 아래 **타임라인**(플래시 버튼 기호의 Up·Over·Down 프레임처럼): 상태 칸을 고르면 미리보기에 그 상태가 걸리고(저장 안 됨), 스타일 탭도 그 상태에 걸리는 규칙을 걸린 규칙으로 보여 줍니다. 애니메이션 프레임 줄은 3단계에서 그 아래에 붙습니다.
 
 1단계에서 설계와 달라진 점:
 - 프레임이 하나뿐인 1단계에서는 "파일 각각/시트" 선택을 화면에 두지 않았습니다(결과가 같음). 상태·애니메이션이 들어오는 2단계에서 보입니다. 사양(`output.layout`)과 배치 코드(`pack.mjs`)는 이미 있습니다.
@@ -76,12 +83,12 @@
     "frameOnly": true,                   // 글자·아이콘을 빼고 틀만 찍음
     "size": "compact"                    // compact(인셋 + 가운데 최소) | original
   },
-  "states": [                            // 2단계
-    { "name": "normal" },
-    { "name": "hover",    "pseudo": ["hover"] },
-    { "name": "pressed",  "pseudo": ["hover", "active"] },
-    { "name": "disabled", "attrs": { "disabled": "" } },
-    { "name": "selected", "classes": ["is-selected"] }
+  "states": [                            // 2단계: 편집기가 CSS에서 찾아 채움. 기본(normal)은 늘 첫 칸이라 목록에 없음
+    { "key": "hover", "label": "호버", "include": true,
+      "tokens": [{ "kind": "pseudo", "name": "hover", "owners": [".slot:not(:disabled)"] }] },
+    { "key": "pressed", "label": "켜짐", "include": true,
+      "tokens": [{ "kind": "attr", "name": "aria-pressed", "value": "true", "owners": [".slot"] }] },
+    { "key": "pressed+hover", "label": "켜짐 + 호버", "combo": true, "include": false, "tokens": [ … ] }
   ],
   "animation": null,                     // 3단계: { "fps": 24, "duration": "auto", "loop": true }
   "output": {
@@ -103,7 +110,7 @@
 | 고른 요소만 | 대상에 표시 클래스를 달고 `html, body, body * { visibility: hidden }`, 대상에는 `visible`. 조상의 배경·테두리·형제가 안 찍히고, 대상 안에서 원래 숨겨진 요소는 그대로 숨음 |
 | 그림자·광채 | 상자보다 넓게(사방 64px) 찍은 뒤 투명 픽셀을 트림. 잘라 낸 만큼을 `spriteSourceSize`와 피벗에 기록. 9-slice면 넘친 만큼을 인셋에 더함 |
 | 배율 | `Emulation.setDeviceMetricsOverride`의 `deviceScaleFactor` = 1·2·3. 확대가 아니라 다시 렌더하므로 글자·선이 선명함 |
-| 상태(2단계) | 가상 클래스는 CDP `CSS.forcePseudoState`(hover·active·focus·focus-visible·focus-within·visited). `disabled`·`aria-*`·`data-state`·클래스는 속성을 직접 바꿈. 상태 사이에는 문서를 원래대로 되돌림 |
+| 상태(2단계) | `<style>`의 가상 클래스를 `:is(:hover,[data-webd-hover])`로 바꿔 쓰고 대상 범위의 요소에 `data-webd-hover`를 붙임(`editor/states.mjs`, 편집기와 같은 함수). `aria-*`·`data-*`·클래스는 실제로 붙임. `transition`은 끄고 찍음. 상태마다 문서를 새로 엶 |
 | 애니메이션(3단계) | `document.getAnimations()`로 CSS 애니메이션·전환을 모두 멈추고 `currentTime`을 프레임 시각으로 맞춤. 길이 `auto`는 가장 긴 1회 반복 길이. JS(requestAnimationFrame) 애니메이션은 CDP 가상 시간으로 따로 처리하고, 못 하면 "JS 애니메이션은 지원하지 않음"이라고 알림 |
 | 폰트 | 캡처 전에 `document.fonts.ready`를 기다림 |
 
@@ -139,7 +146,7 @@
 │ 가운데    (늘림)(반복)                  │
 │ 크기      (최소)(원래)   ☑ 틀만 찍기       │
 │ ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄ │
-│ 상태      ☑ 기본 ☐ hover ☐ pressed ☐ disabled  [+ 추가] │  2단계
+│ 찾은 상태  ☑ 기본 ☑ 호버 ☑ 누름 ☑ 켜짐  (CSS에서 자동) │  2단계
 │ 애니메이션 [없음 ▾]  24fps · 18프레임      │  3단계
 │ 배율      ☑ 1x ☑ 2x ☐ 3x               │
 │ 묶음      (파일 각각)(시트 + JSON)  간격 [2]px │
@@ -160,14 +167,14 @@
 
 - 기본: `<라이브러리 실제 경로의 상위>/export/<id>/`. 지금 설정으로는 `F:\AI\WebD\export\<id>\`입니다(라이브러리가 `F:\AI\WebD\library`, C:의 `~/.webd/library`는 그곳을 가리키는 연결이라 실제 경로로 풀어서 계산). 환경변수 `WEBD_EXPORT`로 기본 상위 폴더를 바꿀 수 있고, **조각마다 내보내기 탭의 "폴더" 칸에서 직접 지정**할 수 있습니다(export.json에 저장).
 - 라이브러리 폴더 안에 두지 않는 이유: 조각을 지우면 `.trash`로 옮겨지는데 산출물까지 같이 사라지고, 엔진으로 가져갈 파일을 한곳에서 모으기 어렵기 때문입니다.
-- 파일: `<name>.png`, `<name>@2x.png`, `<name>.json`(배율마다 `<name>@2x.json`). 다시 내보내면 덮어쓰고, 직전 결과는 `<id>/.previous/`에 한 벌만 남깁니다.
+- 파일: `<name>.png`, `<name>@2x.png`, `<name>.json`(배율마다 `<name>@2x.json`). 상태가 여럿이면 시트 `<name>-sheet.png`·`.json`(프레임 이름 `<name>_<상태>`), "상태마다 파일"이면 `<name>_<상태>.png`. 다시 내보내면 덮어쓰고, 직전 결과는 `<id>/.previous/`에 한 벌만 남깁니다.
 
 ## 8. 단계와 완료 조건
 
 | 단계 | 내용 | 완료 조건 |
 |---|---|---|
 | 1 | 라이브러리 서버(목록→편집기), 내보내기 탭, 한 장·9-slice·3-slice, 배율, 파일 각각·시트 + JSON, export.json 저장 | 저장된 실제 조각(SAO 패널, 슬롯 버튼)으로 PNG·JSON 생성, 투명 픽셀 확인, 늘려 보기 확인, 라이트·다크 화면 확인, 단위 테스트 통과 |
-| 2 | 상태별(가상 클래스 강제, 속성·클래스), 상태 × 9-slice | 버튼 조각의 hover·pressed·disabled가 각각 다른 PNG로 나옴 |
+| 2 (구현됨) | 상태 자동 찾기(가상 클래스·속성·클래스·조합), 상태 × 9-slice, 시트 + frameTags, 편집기 타임라인 상태 줄 | 버튼 조각의 상태가 각각 다른 칸으로 나옴(실제 슬롯 버튼: 기본·호버·누름·빈칸·켜짐 5칸, 포커스는 같아서 뺌), 브라우저 시험 통과 |
 | 3 | 애니메이션 프레임, `frameTags`, 상태 전환 프레임 | CSS 애니메이션 조각에서 프레임 수·시각이 사양과 맞음 |
 | 4 | 트림·빽빽한 배치, 엔진 가져오기 파일(Unity·Godot), 명령줄 `library.mjs export <id>` | 엔진에서 실제로 가져와 확인(사용자 환경 필요) |
 
@@ -176,3 +183,4 @@
 1. 산출물 위치는 **내보내기 탭에서 지정할 수 있어야 함**. 기본값은 7절 안(`<라이브러리 상위>/export/<id>`, 이 PC에서는 `F:\AI\WebD\export\<id>`)
 2. 엔진: "잘 만든 시트는 범용으로 쓴다". 특정 엔진에 묶지 않는 Aseprite 호환 JSON을 기본으로 하고, Unity·Godot 값을 같은 JSON에 함께 넣음
 3. 1단계부터 바로 구현
+4. 상태는 **CSS에 해당 규칙이 있으면 시트에 자동으로 넣는다**(버튼이라서가 아니라 규칙이 있어서 생김). 편집기에서는 찾은 상태를 모아 골라 보게 하고, 애니메이션 프레임 고르기는 맨 아래 별도 줄로 — 플래시처럼(2026-11-10)

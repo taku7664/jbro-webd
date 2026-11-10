@@ -8,6 +8,7 @@ import {
 } from "./css-model.mjs";
 import { initExport } from "./export-panel.mjs";
 import { bodyRange, replaceBody, cssForCopy, mergeCss, classValue, clipboardText } from "./structure.mjs";
+import { findStates, applyWebdState, revertWebdState, rewriteStateSelectors, rewriteStateSelector } from "./states.mjs";
 
 const $ = (id) => document.getElementById(id);
 /** 로컬 시간대 오프셋을 붙인 ISO 문자열(library.mjs의 localIso와 같은 형식) */
@@ -24,6 +25,8 @@ const S = {
   selected: null, selPath: null, hovered: null, pick: false, all: false, editable: true, editing: null, conflict: false,
   // 구조 편집: 원문을 따로 읽은 문서(model)를 고치고 미리보기에 옮긴다. 저장할 때만 <body> 안쪽을 바꿔 넣는다.
   model: null, savedBody: "", struct: { ok: false, reason: "아직 불러오는 중입니다." },
+  // 상태(타임라인): CSS에서 찾은 상태 목록과 지금 미리보기에 건 상태. 미리보기에만 걸고 저장 파일에는 남지 않는다.
+  states: [], stateKey: "normal", stateUndo: [],
 };
 const CLIP_KEY = "webd-editor-clipboard";
 function buildModel(html) {
@@ -202,9 +205,10 @@ const norm = (s) => String(s).replace(/\r\n?/g, "\n");
 function applyStyles() {
   if (!S.editable) return;
   let changed = false;
-  styleEls.forEach((el, i) => { if (norm(el.textContent) !== norm(S.styles[i])) { el.textContent = S.styles[i]; changed = true; } });
+  // 미리보기에는 상태 가상 클래스를 :is(:hover,[data-webd-hover])로 바꿔 넣는다(타임라인에서 상태를 걸 수 있게). 저장·원문은 그대로.
+  styleEls.forEach((el, i) => { const live = rewriteStateSelectors(S.styles[i]); if (norm(el.textContent) !== norm(live)) { el.textContent = live; changed = true; } });
   needDraw = true;
-  if (changed) exp?.stylesChanged();
+  if (changed) { exp?.stylesChanged(); scheduleStates(); }
 }
 /** 지금 화면 그대로의 문서(저장 안 한 CSS 변경 포함). 내보내기가 쓴다. */
 function currentHtml() {
@@ -234,6 +238,7 @@ $("frame").addEventListener("load", () => {
   styleEls = [...doc.querySelectorAll("style")];
   S.editable = styleEls.length === S.saved.length && styleEls.every((el, i) => norm(el.textContent) === norm(S.saved[i]));
   if (!S.editable) banner("이 컴포넌트는 스크립트가 <style>을 더하거나 바꿔서 화면에서 편집할 수 없습니다. 고칠 내용을 에이전트에게 말로 요청하세요.");
+  S.stateUndo = [];   // 이전 문서에 건 상태 기록은 버린다
   S.struct = checkStruct();
   if (S.struct.ok && bodyChanged()) syncLive(S.selPath);   // 초안에서 이어 편집한 구조를 화면에 옮긴다
   applyStyles();
@@ -248,12 +253,73 @@ $("frame").addEventListener("load", () => {
   S.selected = S.selPath ? resolvePath(S.selPath) : null;
   renderTree(); renderPanel(); renderBlocks(); updateState();
   exp?.frameLoaded();
+  detectStates();
   new MutationObserver(() => {
     if (S.selected && !S.selected.isConnected) { S.selected = null; S.selPath = null; needDraw = true; renderPanel(); }
     else if (S.selected) S.selPath = pathOf(S.selected);
     renderTree();
   }).observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["id", "class"] });
 });
+
+// ---------- 상태 타임라인(플래시 버튼의 Up·Over·Down처럼) ----------
+// CSS에서 찾은 상태를 미리보기 아래 한 줄에 칸으로 늘어놓고, 고른 칸의 상태를 미리보기에 건다.
+// 상태는 고른 요소(없으면 조각 전체)에 걸린다. 내보내기도 같은 함수(states.mjs)로 건다.
+
+let statesTimer = null;
+function scheduleStates() { clearTimeout(statesTimer); statesTimer = setTimeout(detectStates, 350); }
+function detectStates() {
+  if (!doc?.body || !S.editable) { S.states = []; renderTimeline(); exp?.statesDetected([]); return; }
+  revertWebdState(S.stateUndo); S.stateUndo = [];        // 찾기는 상태를 걸지 않은 모습에서
+  let found = [];
+  try { found = findStates(S.styles, doc); } catch (e) { console.warn("상태 찾기 실패", e); }
+  S.states = found;
+  if (!found.some((s) => s.key === S.stateKey)) S.stateKey = "normal";
+  applyPreviewState();
+  renderTimeline();
+  exp?.statesDetected(found);
+}
+/** 지금 고른 상태를 미리보기에 다시 건다(고른 요소가 바뀌거나 구조가 바뀌었을 때도) */
+function applyPreviewState() {
+  revertWebdState(S.stateUndo); S.stateUndo = [];
+  const st = S.states.find((s) => s.key === S.stateKey);
+  if (st && doc?.body) {
+    const scope = S.selected && S.selected.isConnected && S.selected !== doc.body ? S.selected : doc.body;
+    S.stateUndo = applyWebdState(doc, st.tokens, scope);
+  }
+  needDraw = true;
+}
+function setPreviewState(key) {
+  if (key !== "normal" && !S.states.some((s) => s.key === key)) return;
+  S.stateKey = key;
+  applyPreviewState(); renderTimeline(); renderPanel();
+}
+function renderTimeline() {
+  const root = $("timeline"); if (!root) return;
+  const cells = [{ key: "normal", label: "기본", tokens: [] }, ...S.states];
+  const row = el("div", { class: "tl-cells", role: "radiogroup", "aria-label": "미리보기 상태" });
+  for (const s of cells) {
+    const on = s.key === S.stateKey;
+    const how = s.tokens.map((t) => t.kind === "pseudo" ? `:${t.name}` : t.kind === "attr" ? `[${t.name}="${t.value}"]` : `.${t.name}`).join(" + ");
+    row.append(el("button", { type: "button", role: "radio", class: "tl-cell" + (s.combo ? " is-combo" : ""), "aria-checked": String(on), tabindex: on ? "0" : "-1",
+      title: s.key === "normal" ? "아무 상태도 걸지 않은 모습" : `${how} — 미리보기에만 걸고 저장하지 않습니다`, "data-key": s.key,
+      onclick: () => setPreviewState(s.key) }, el("span", { class: "tl-name", text: s.label })));
+  }
+  row.addEventListener("keydown", (e) => {   // ← → 로 칸 옮기기
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault(); e.stopPropagation();
+    const i = cells.findIndex((c) => c.key === S.stateKey);
+    const next = cells[(i + (e.key === "ArrowRight" ? 1 : cells.length - 1)) % cells.length];
+    setPreviewState(next.key);
+    $("timeline").querySelector(`.tl-cell[data-key="${CSS.escape(next.key)}"]`)?.focus();
+  });
+  const scope = S.selected && S.selected !== doc?.body && S.selected?.isConnected ? label(S.selected) : "조각 전체";
+  root.replaceChildren(
+    el("div", { class: "tl-row" },
+      el("span", { class: "tl-label", text: "상태" }),
+      S.states.length ? row : el("span", { class: "tl-empty", text: S.editable ? "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없습니다." : "이 조각은 화면에서 편집할 수 없어 상태를 찾지 않습니다." }),
+      S.states.length ? el("span", { class: "tl-scope", text: S.stateKey === "normal" ? `${S.states.length}개 상태` : `${scope}에 걸림 · 저장 안 됨` }) : null),
+  );
+}
 
 // ---------- 구조 편집(유니티 Hierarchy처럼) ----------
 // 잘라내기·복사·붙여넣기·자식으로 붙여넣기·복제·삭제·이름 바꾸기(클래스)·만들기·빈 부모 만들기·맨 앞/뒤로.
@@ -275,12 +341,14 @@ function modelPath(n) { const p = []; while (n && n.parentElement) { p.unshift([
 function syncLive(path) {
   if (!doc?.body || !S.model) return;
   doc.body.replaceChildren(...[...S.model.body.childNodes].map((n) => doc.importNode(n, true)));
+  S.stateUndo = [];   // 걸었던 요소는 바꿔 끼워져 사라졌다
   styleEls = [...doc.querySelectorAll("style")];
   styleEls.forEach((s, i) => { if (S.styles[i] != null) s.textContent = S.styles[i]; });
   const next = path ? resolvePath(path) : null;
   S.selected = next && next !== doc.documentElement ? next : null; S.selPath = S.selected ? pathOf(S.selected) : null;
   for (let n = S.selected?.parentElement; n && n !== doc.documentElement; n = n.parentElement) collapsed.delete(pathOf(n).join("."));
   needDraw = true; renderTree();
+  applyPreviewState(); scheduleStates();
   exp?.frameLoaded(); exp?.stylesChanged();
 }
 
@@ -340,6 +408,11 @@ const writeClip = (v) => { try { v ? localStorage.setItem(CLIP_KEY, JSON.stringi
 
 /** 복사(cut이면 잘라내기 표시). 다른 컴포넌트에 붙여도 모양이 같도록 걸린 CSS도 함께 담는다. */
 function copySelected(cut = false) {
+  // 타임라인에서 건 상태(속성·data-webd-*)가 복사본에 섞이지 않게 잠깐 풀고 복사한다
+  revertWebdState(S.stateUndo); S.stateUndo = [];
+  try { copySelectedNow(cut); } finally { applyPreviewState(); }
+}
+function copySelectedNow(cut) {
   const live = S.selected && S.selected !== doc?.body && S.selected.isConnected ? S.selected : null;
   // 구조 편집을 막은 컴포넌트도 복사는 된다(화면에 보이는 요소 그대로). 잘라내기는 구조 편집이 필요하다.
   const m = S.struct.ok ? selectedModel() : live;
@@ -524,6 +597,8 @@ function select(el, focusTree = false) {
   if (!el || el.nodeType !== 1) return;
   if (S.editing) commitEditing();
   S.selected = el; S.selPath = pathOf(el); needDraw = true;
+  if (S.stateKey !== "normal") applyPreviewState();
+  renderTimeline();
   for (let n = el.parentElement; n && n !== doc.documentElement; n = n.parentElement) collapsed.delete(pathOf(n).join("."));
   renderTree();
   if (focusTree && !matchMedia("(max-width: 760px)").matches) $("tree").querySelector('[aria-selected="true"] > .tree-row > .tree-pick')?.focus();
@@ -670,7 +745,7 @@ function matchedRules(el, parsed) {
       for (const part of splitSelectors(rule.selector)) {
         if (/::/.test(part)) continue;
         try {
-          if (el.matches(part)) { const sp = specificity(part); if (!best || cmpSpec(sp, best) > 0) best = sp; }
+          if (el.matches(rewriteStateSelector(part))) { const sp = specificity(part); if (!best || cmpSpec(sp, best) > 0) best = sp; }
           else {
             const pseudos = part.match(STATE_PSEUDO);
             if (pseudos) {
@@ -954,7 +1029,7 @@ $("tab-css").onclick = () => showTab("css");
 $("tab-export").onclick = () => showTab("export");
 
 const exp = ID ? initExport({
-  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(), record: recordExport,
+  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(), record: recordExport, showState: (key) => setPreviewState(key),
   selected: () => (S.selected && S.selected.isConnected ? S.selected : null),
   pathOf, label, resolve: (p) => (doc ? resolvePath(p) : null),
   frameDoc: () => doc, frameWin: () => win,

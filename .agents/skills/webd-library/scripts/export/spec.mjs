@@ -26,7 +26,8 @@ export function defaultSpec(id) {
     bounds: "ink",
     scales: [1],
     slice: { mode: "none", insets: { l: 0, t: 0, r: 0, b: 0 }, fill: "stretch", frameOnly: true, size: "compact" },
-    states: [{ name: "normal" }],
+    // 기본 상태(normal)는 늘 첫 프레임. 여기에는 편집기가 CSS에서 찾은 상태가 들어간다(include: false면 뺌).
+    states: [],
     animation: null,
     output: { dir: "", layout: "sheet", sheet: { type: "rows", columns: "auto", padding: 2, extrude: 0 }, data: "aseprite-hash" },
   };
@@ -67,8 +68,8 @@ export function normalizeSpec(input, id) {
     const need = out.slice.mode === "three-h" ? l + r : out.slice.mode === "three-v" ? t + b : l + r + t + b;
     if (!need) warnings.push("인셋이 모두 0이면 모서리가 고정되지 않습니다. 인셋을 정하거나 'CSS에서 추정'을 누르세요.");
   }
-  // 2·3단계 항목: 1단계에서는 기본 상태 하나, 애니메이션 없음만 받는다.
-  if (Array.isArray(s.states) && s.states.length > 1) warnings.push("상태별 내보내기는 아직 지원하지 않아 기본 상태만 내보냅니다.");
+  out.states = normalizeStates(s.states);
+  // 3단계 항목
   if (s.animation) warnings.push("애니메이션 내보내기는 아직 지원하지 않아 한 프레임만 내보냅니다.");
   const o = s.output ?? {};
   out.output.dir = typeof o.dir === "string" ? o.dir.trim().slice(0, 1024) : "";
@@ -85,12 +86,39 @@ export function normalizeSpec(input, id) {
 
 function specError(msg) { const e = new Error(msg); e.status = 400; return e; }
 
-/** 내보낼 프레임 목록(배율 하나 기준). 1단계: 상태 하나 × 프레임 하나 */
-export function expandFrames(spec) {
-  const states = spec.states?.length ? spec.states.slice(0, 1) : [{ name: "normal" }];
-  return states.map((st, i) => ({ index: i, state: st.name, time: 0, duration: 100, filename: frameName(spec, st.name, states.length) }));
+const STATE_KEY = /^[a-z0-9가-힣_+-]{1,60}$/;
+const TOKEN_KINDS = new Set(["pseudo", "attr", "class"]);
+/**
+ * 상태 목록 검증. [{ key, label, tokens: [{ kind, name, value?, owners: [선택자] }], include }]
+ * 모양이 틀린 항목은 버린다(편집기가 다시 찾아 채운다). 옛 형식([{ name: "normal" }])은 빈 목록이 된다.
+ */
+export function normalizeStates(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [], seen = new Set(["normal"]);
+  for (const st of list.slice(0, 32)) {
+    if (!st || typeof st !== "object" || !STATE_KEY.test(String(st.key ?? "")) || seen.has(st.key) || !Array.isArray(st.tokens)) continue;
+    const tokens = [];
+    for (const t of st.tokens.slice(0, 8)) {
+      if (!t || !TOKEN_KINDS.has(t.kind) || typeof t.name !== "string" || !/^[\w-]{1,80}$/.test(t.name)) { tokens.length = 0; break; }
+      const owners = Array.isArray(t.owners) ? t.owners.filter((o) => typeof o === "string" && o.length > 0 && o.length <= 300).slice(0, 16) : [];
+      if (!owners.length) { tokens.length = 0; break; }
+      tokens.push({ kind: t.kind, name: t.name, ...(t.kind === "attr" ? { value: String(t.value ?? "").slice(0, 200) } : {}), owners });
+    }
+    if (!tokens.length) continue;
+    seen.add(st.key);
+    out.push({ key: st.key, label: String(st.label ?? st.key).slice(0, 60), tokens, include: st.include !== false, ...(st.combo ? { combo: true } : {}) });
+  }
+  return out;
 }
-function frameName(spec, state, count) { return count > 1 ? `${spec.name}_${state}` : spec.name; }
+
+/** 내보낼 프레임 목록(배율 하나 기준). 기본 상태 + 켠 상태들 × (3단계: 애니메이션 프레임) */
+export function expandFrames(spec) {
+  const states = [{ key: "normal", label: "기본", tokens: [] }, ...(spec.states || []).filter((s) => s.include !== false)];
+  return states.map((st, i) => ({
+    index: i, state: st.key, label: st.label, tokens: st.tokens, time: 0, duration: 100,
+    filename: states.length > 1 ? `${spec.name}_${st.key}` : spec.name,
+  }));
+}
 
 /** 배율에 붙는 파일 이름 꼬리: 1배는 없음, 2배는 @2x */
 export const scaleSuffix = (scale) => (scale === 1 ? "" : `@${scale}x`);

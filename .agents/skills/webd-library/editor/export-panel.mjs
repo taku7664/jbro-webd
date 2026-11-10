@@ -15,6 +15,17 @@ export function initExport(ctx) {
   let preview = null;          // 마지막 미리보기 응답
   let estimateNote = "";
   let drag = null;
+  let detected = null;         // 편집기가 CSS에서 찾은 상태(타임라인과 같은 목록)
+
+  /** 찾은 상태를 사양에 맞춘다. 켜고 끈 값은 키로 이어받고, 새로 찾은 상태는 켜 둔다. 바뀌었으면 true */
+  function mergeStates(list) {
+    const old = new Map((spec.states || []).map((s) => [s.key, s]));
+    const next = list.map((s) => ({ key: s.key, label: s.label, tokens: s.tokens, include: old.get(s.key)?.include ?? true, ...(s.combo ? { combo: true } : {}) }));
+    if (JSON.stringify(next) === JSON.stringify(spec.states || [])) return false;
+    spec.states = next;
+    return true;
+  }
+  const frameCount = () => 1 + (spec.states || []).filter((s) => s.include !== false).length;
 
   // ---------- 서버 ----------
   async function load() {
@@ -24,6 +35,7 @@ export function initExport(ctx) {
     spec = d.spec; defaultDir = d.defaultDir; lastExport = d.lastExport;
     // 미리보기 문서가 이미 있을 때만 대상 경로를 확인한다(아직이면 frameLoaded에서)
     if (ctx.frameDoc() && spec.target.kind === "element" && !ctx.resolve(spec.target.path)) spec.target = { kind: "root" };
+    if (detected) mergeStates(detected);
     committed = clone(spec);
     render();
     if (active) schedulePreview(0);
@@ -46,7 +58,7 @@ export function initExport(ctx) {
     const d = await r.json().catch(() => ({}));
     if (seq !== previewSeq) return;           // 그새 설정이 또 바뀜
     if (!r.ok) { preview = null; showError(d.error || `미리보기 실패 (${r.status})`); renderResult(); return; }
-    preview = d; setStatus(""); renderResult();
+    preview = d; setStatus(""); renderResult(); renderFooter();
   }
   async function doExport() {
     if (busy) return;
@@ -83,8 +95,11 @@ export function initExport(ctx) {
         row("자르기", seg("slice", Object.entries(SLICE_LABEL), spec.slice.mode, (v) => { spec.slice.mode = v; if (v !== "none" && !anyInset()) estimate(false); changed(); })),
         ...(spec.slice.mode === "none" ? [] : sliceRows()),
       ]),
+      section("상태", stateRows()),
       section("출력", [
         row("이름", input("name", spec.name, (v) => { spec.name = v; changed({ preview: false }); }, { spellcheck: "false" })),
+        ...(frameCount() > 1 ? [row("형태", seg("layout", [["sheet", "시트 한 장"], ["files", "상태마다 파일"]], spec.output.layout, (v) => { spec.output.layout = v; changed({ preview: false }); }),
+          el("span", { class: "xp-sub", text: spec.output.layout === "sheet" ? "상태를 한 PNG에 모으고 JSON의 frameTags에 상태 이름을 넣습니다." : "상태마다 PNG·JSON을 따로 씁니다(이름_상태.png)." }))] : []),
         row("배율", el("div", { class: "xp-checks" }, ...[1, 2, 3, 4].map((s) => check(`${s}x`, spec.scales.includes(s), (on) => {
           const next = new Set(spec.scales); on ? next.add(s) : next.delete(s);
           if (!next.size) { setStatus("배율은 하나 이상 골라야 합니다."); render(); return; }
@@ -118,6 +133,21 @@ export function initExport(ctx) {
     ];
   }
 
+  /** CSS에서 찾은 상태: 기본은 늘 들어가고, 나머지는 켜고 끈다. 상태를 보는 것은 아래 타임라인에서. */
+  function stateRows() {
+    const list = spec.states || [];
+    if (!detected) return [row("찾은 상태", el("span", { class: "xp-sub", text: "미리보기를 불러오면 CSS에서 상태를 찾습니다." }))];
+    if (!list.length) return [row("찾은 상태", el("span", { class: "xp-sub", text: "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없어 기본 모습 한 장만 내보냅니다." }))];
+    return [row("찾은 상태", el("div", { class: "xp-checks xp-states" },
+      el("label", { class: "xp-check is-fixed", title: "기본 상태는 늘 첫 칸입니다" }, el("input", { type: "checkbox", checked: "", disabled: "" }), el("span", { text: "기본" })),
+      ...list.map((s) => {
+        const c = check(s.label, s.include !== false, (on) => { s.include = on; changed(); });
+        c.title = s.tokens.map((t) => t.kind === "pseudo" ? `:${t.name}` : t.kind === "attr" ? `[${t.name}="${t.value}"]` : `.${t.name}`).join(" + ") + ` → ${s.key}`;
+        return c;
+      })),
+      el("span", { class: "xp-sub", text: `CSS에서 찾은 상태를 상태마다 다시 렌더합니다(${frameCount()}칸). 기본과 똑같이 보이는 상태는 내보낼 때 뺍니다. 상태를 눈으로 보려면 미리보기 아래 타임라인에서 고르세요.` }))];
+  }
+
   function targetNote() {
     if (spec.target.kind === "root") return el("span", { class: "xp-sub", text: "body 전체를 찍습니다." });
     const elx = ctx.resolve(spec.target.path);
@@ -131,17 +161,26 @@ export function initExport(ctx) {
     box.replaceChildren();
     if (!preview) { box.append(el("p", { class: "note", text: active ? "렌더를 기다리는 중입니다." : "" })); return; }
     for (const p of preview.previews) {
-      const w = p.size.w / p.scale, h = p.size.h / p.scale;
+      const frames = p.frames?.length > 1 ? p.frames : null;
+      // 상태가 여럿이면 상태마다 한 칸씩(누르면 타임라인도 그 상태로), 하나면 한 장
+      const main = frames ? frames[0] : { url: p.url, size: p.size };
+      const w = main.size.w / p.scale, h = main.size.h / p.scale;
       // 작은 스프라이트는 정수배로 키워 픽셀이 보이게 한다(실제 파일 크기는 그대로)
-      const zoom = Math.max(1, Math.min(8, Math.floor(160 / Math.max(w, h, 1))));
-      const img = el("img", { src: p.url, alt: `${p.png} 결과`, width: String(w * zoom), height: String(h * zoom), class: zoom > 1 ? "pixelated" : null });
-      const fig = el("figure", { class: "xp-fig" },
-        el("div", { class: "xp-img ui-checkerboard" }, img),
-        el("figcaption", {}, el("strong", { text: p.png }), ` ${p.size.w}×${p.size.h}px`,
-          p.insets ? ` · L${p.insets.l} T${p.insets.t} R${p.insets.r} B${p.insets.b}` : "",
-          zoom > 1 ? el("span", { class: "xp-zoom", text: ` · 화면에서 ×${zoom} 확대` }) : null));
-      box.append(fig);
-      if (p.insets) box.append(stretchDemo(p, w, h));
+      const zoom = Math.max(1, Math.min(8, Math.floor((frames ? 96 : 160) / Math.max(w, h, 1))));
+      const pic = (f) => el("img", { src: f.url, alt: `${f.label ?? p.png} 결과`, width: String(f.size.w / p.scale * zoom), height: String(f.size.h / p.scale * zoom), class: zoom > 1 ? "pixelated" : null });
+      const caption = el("figcaption", {}, el("strong", { text: p.png }), ` ${p.size.w}×${p.size.h}px`,
+        frames ? ` · ${frames.length}칸` : "",
+        p.insets ? ` · L${p.insets.l} T${p.insets.t} R${p.insets.r} B${p.insets.b}` : "",
+        zoom > 1 ? el("span", { class: "xp-zoom", text: ` · 화면에서 ×${zoom} 확대` }) : null);
+      if (frames) {
+        box.append(el("figure", { class: "xp-fig" },
+          el("div", { class: "xp-frames" }, ...frames.map((f) => el("button", { type: "button", class: "xp-frame", title: `타임라인에서 "${f.label}" 보기`, onclick: () => ctx.showState?.(f.key) },
+            el("span", { class: "xp-img ui-checkerboard" }, pic(f)), el("span", { class: "xp-frame-name", text: f.label })))),
+          caption));
+      } else {
+        box.append(el("figure", { class: "xp-fig" }, el("div", { class: "xp-img ui-checkerboard" }, pic({ ...main, label: p.png })), caption));
+      }
+      if (p.insets) box.append(stretchDemo({ ...p, url: main.url }, w, h));
     }
     if (preview.warnings?.length) box.append(el("ul", { class: "xp-warn" }, ...preview.warnings.map((t) => el("li", { text: t }))));
   }
@@ -164,11 +203,14 @@ export function initExport(ctx) {
 
   function renderFooter(justDone = false) {
     const foot = pane.querySelector(".xp-foot"); if (!foot) return;
-    const n = spec.scales.length;
+    // 결과가 있으면 실제 칸 수(기본과 같아서 뺀 상태 제외), 없으면 켠 상태 수
+    const got = preview?.previews;   // 미리보기는 배율 하나: 시트면 1개(frames 여럿), 상태마다 파일이면 상태 수만큼
+    const n = spec.scales.length, k = got?.length ? (got.length > 1 ? got.length : (got[0].frames?.length || 1)) : frameCount();
+    const files = k > 1 && spec.output.layout === "files" ? n * k : n;
     const dir = spec.output.dir || defaultDir;
     foot.replaceChildren(...[
       ctx.isDirty() ? el("p", { class: "xp-dirty", text: "저장하지 않은 CSS 변경도 화면 그대로 내보냅니다." }) : null,
-      el("p", { class: "xp-summary" }, `PNG ${n}장 + JSON ${n}개 (${spec.scales.map((x) => `${x}x`).join("·")}) → `, el("code", { text: dir })),
+      el("p", { class: "xp-summary" }, `${k > 1 && spec.output.layout === "sheet" ? "시트 " : ""}PNG ${files}장 + JSON ${files}개 (${k > 1 ? `상태 ${k}칸 · ` : ""}${spec.scales.map((x) => `${x}x`).join("·")}) → `, el("code", { text: dir })),
       el("div", { class: "xp-actions" },
         el("button", { type: "button", class: "primary ui-primary xp-go", text: busy ? "내보내는 중…" : "내보내기", disabled: busy || null, onclick: doExport }),
         lastExport ? el("span", { class: `xp-last${justDone ? " done" : ""}`, text: `${justDone ? "완료" : "마지막"} ${String(lastExport.at).slice(5, 16).replace("T", " ")} · ${lastExport.files.length}개 파일` }) : null,
@@ -276,7 +318,7 @@ export function initExport(ctx) {
   // ---------- 작은 UI 부품(스타일 탭과 같은 이름-값 두 열) ----------
   function section(title, rows) { return el("section", { class: "xp-sec" }, el("h3", { class: "sect", text: title }), el("div", { class: "xp-rows" }, ...rows)); }
   function row(name, control, sub) { return el("div", { class: "xp-row" }, el("span", { class: "xp-name", text: name }), el("div", { class: "xp-val" }, control, sub ?? null)); }
-  const ARIA = { target: "찍을 것", background: "배경", bounds: "범위", slice: "자르기", fill: "가운데", size: "크기" };
+  const ARIA = { target: "찍을 것", background: "배경", bounds: "범위", slice: "자르기", fill: "가운데", size: "크기", layout: "형태" };
   function seg(key, options, value, on) {
     return el("div", { class: "xp-seg", role: "radiogroup", "aria-label": ARIA[key] ?? key },
       ...options.map(([v, t]) => el("button", { type: "button", role: "radio", "aria-checked": String(v === value), "data-xp": `${key}-${v}`, text: t,
@@ -329,6 +371,13 @@ export function initExport(ctx) {
         spec.target = { kind: "root" }; committed = clone(spec); render();
         setStatus(`저장된 대상(${lost})을 찾지 못해 조각 전체로 바꿨습니다.`);
       } else if (spec && active) render();
+    },
+    /** 편집기가 CSS에서 상태를 다시 찾았다(불러올 때·CSS를 고칠 때). 사용자가 바꾼 것이 아니라 되돌리기 기록에는 넣지 않는다. */
+    statesDetected(list) {
+      detected = list;
+      if (!spec) return;
+      if (mergeStates(list)) { committed = clone(spec); persist(); if (active) schedulePreview(); }
+      if (active) render();
     },
   };
 }
