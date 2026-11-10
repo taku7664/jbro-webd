@@ -36,6 +36,64 @@ test("완성된 문서는 그대로 저장한다", () => {
   assert.equal(ensureDocument(doc, "t"), doc);
 });
 
+test("button 저장은 상태 비교 화면을 거절하고 라이브러리를 만들지 않는다", () => {
+  const lib = freshLib();
+  const file = part('<main><h1>슬롯 상태</h1><figure><button>기본</button></figure><figure><button disabled>호버</button></figure></main>');
+  const result = spawnSync(process.execPath, [cli, "save", "--lib", lib, "--file", file, "--name", "슬롯 버튼", "--category", "button"], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /컨트롤 하나/);
+  assert.equal(existsSync(lib), false);
+});
+
+test("button 저장은 단일 CTA와 내부 아이콘을 허용하고 별도 컨트롤·설명을 거절한다", () => {
+  const lib = freshLib();
+  const cta = '<div style="padding: 12px"><a href="/help" data-note="<button>"><svg aria-hidden="true"><path d="M0 0"/></svg>도움말</a></div>';
+  assert.equal(save(lib, { file: part(cta), name: "CTA", category: "button" }).meta.category, "button");
+  const native = '<style>button::before {content:"<button>"}</style><!-- <button> --><button><span>확인</span></button><script>const example = "<button>";</script>';
+  assert.equal(save(lib, { file: part(native), name: "확인", category: "button" }).meta.category, "button");
+  for (const html of [
+    '<button>확인</button><p>상태 안내</p>',
+    '<button>기본</button><button hidden>선택</button>',
+    '<button>확인<input type="text"></button>',
+    '<button>확인<span role="button" tabindex="0">다른 조작</span></button>',
+    '<button>확인</button><p>본문 밖 설명</p></button>',
+    '<a data-note="href=/demo">조작 불가</a>',
+    '<template><button>견본</button></template>',
+    '<div hidden><button>숨김</button></div>',
+  ]) {
+    assert.throws(() => save(lib, { file: part(html), name: "예제", category: "button" }), /컨트롤 하나/);
+  }
+  const menu = '<nav aria-label="분류"><button>무기</button><button>장비</button></nav>';
+  assert.equal(save(lib, { file: part(menu), name: "분류 메뉴", category: "nav" }).meta.category, "nav");
+  assert.equal(loadEntries(lib).length, 3);
+});
+
+test("스프라이트 PNG와 HTML로 이름만 바꾼 바이너리는 등록하지 않는다", () => {
+  const lib = freshLib();
+  const png = join(work, "sprite-sheet.png");
+  const renamed = join(work, "sprite-sheet.html");
+  const header = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  writeFileSync(png, header);
+  writeFileSync(renamed, header);
+  assert.throws(() => save(lib, { file: png, name: "Sprite Sheet" }), /별도 산출물/);
+  assert.throws(() => save(lib, { file: renamed, name: "Sprite Sheet" }), /UTF-8 HTML/);
+  assert.equal(existsSync(lib), false);
+});
+
+test("button 갱신 거절은 기존 HTML·메타·이력·목록을 보존한다", () => {
+  const lib = freshLib();
+  const first = save(lib, { file: part("<button>확인</button>"), name: "확인", category: "button" });
+  const paths = [join(first.dir, "component.html"), join(first.dir, "meta.json"), join(lib, "index.html")];
+  const before = paths.map(p => readFileSync(p, "utf8"));
+  const invalid = part("<button>기본</button><button>눌림</button>");
+  assert.throws(() => save(lib, { id: first.meta.id, file: invalid }), /컨트롤 하나/);
+  assert.deepEqual(paths.map(p => readFileSync(p, "utf8")), before);
+  assert.equal(existsSync(join(first.dir, "history")), false);
+  const next = save(lib, { id: first.meta.id, file: part("<input type=submit value=확인>") });
+  assert.equal(next.meta.versions, 2);
+  assert.equal(readdirSync(join(first.dir, "history")).length, 1);
+});
+
 test("같은 이름이면 id 뒤에 번호가 붙는다", () => {
   const lib = freshLib();
   const a = save(lib, { file: part("<p>a</p>"), name: "Hero" });

@@ -3,10 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, existsSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { renderCheck, findBrowser } from "../skills/webd/scripts/render-check.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -14,6 +14,23 @@ const fx = (n) => join(here, "fixtures", n);
 const cli = join(here, "..", "skills", "webd", "scripts", "render-check.mjs");
 const skip = findBrowser() ? false : "Chrome·Edge·Chromium 없음";
 const rules = (run) => new Set(run.findings.map((f) => f.rule));
+const profileDirs = (dir) => readdirSync(dir).filter((name) => name.startsWith("webd-render-"));
+const isolatedTemp = (dir) => ({ ...process.env, TMP: dir, TEMP: dir, TMPDIR: dir });
+
+test("브라우저를 시작할 수 없어도 검증용 프로필을 정리한다", () => {
+  const out = mkdtempSync(join(tmpdir(), "webd-startup-test-"));
+  try {
+    const script = `
+      import assert from "node:assert/strict";
+      import { launch } from ${JSON.stringify(pathToFileURL(cli).href)};
+      await assert.rejects(launch(process.argv[1]), { code: "ENOENT" });
+    `;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", script, join(out, "missing-browser.exe")],
+      { encoding: "utf8", env: isolatedTemp(out), timeout: 10000 });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(profileDirs(out), []);
+  } finally { rmSync(out, { recursive: true, force: true }); }
+});
 
 test("나쁜 픽스처 375px: 렌더에서만 보이는 문제를 모두 잡는다", { skip, timeout: 120000 }, async () => {
   const { runs } = await renderCheck(fx("render-bad.html"), { widths: [375] });
@@ -39,9 +56,13 @@ test("좋은 픽스처: 두 폭 × 두 모드에서 high·medium 0건", { skip, 
 test("CLI: 지적 있음 2, 없음 0, 없는 파일 1, 스크린샷 저장", { skip, timeout: 180000 }, () => {
   const out = mkdtempSync(join(tmpdir(), "webd-shot-"));
   try {
-    const run = (...a) => spawnSync(process.execPath, [cli, ...a], { encoding: "utf8", timeout: 120000 });
-    assert.equal(run(fx("render-bad.html"), "--widths", "375").status, 2);
-    assert.equal(run(fx("render-good.html"), "--widths", "375", "--out", out).status, 0);
+    const run = (...a) => spawnSync(process.execPath, [cli, ...a], { encoding: "utf8", env: isolatedTemp(out), timeout: 120000 });
+    const bad = run(fx("render-bad.html"), "--widths", "375");
+    assert.equal(bad.status, 2, bad.stderr);
+    assert.deepEqual(profileDirs(out), []);
+    const good = run(fx("render-good.html"), "--widths", "375", "--out", out);
+    assert.equal(good.status, 0, good.stderr);
+    assert.deepEqual(profileDirs(out), []);
     const shot = join(out, "375-light.png");
     assert.ok(existsSync(shot) && statSync(shot).size > 1000, "스크린샷 PNG");
     assert.equal(run(fx("없는파일.html")).status, 1);

@@ -120,11 +120,11 @@ function req(port, method, path, { body, headers = {} } = {}) {
   });
 }
 
-async function setup() {
+async function setup({ category, content = '<div class="plan-row">한 사람</div>' } = {}) {
   const lib = mkdtempSync(join(work, "lib-"));
   const src = join(work, `src-${Date.now()}.html`);
-  writeFileSync(src, `<!doctype html><html><head><style>${CSS}</style></head><body><div class="plan-row">한 사람</div></body></html>`);
-  const { meta } = save(lib, { file: src, name: "플랜 표", viewport: "800x400" });
+  writeFileSync(src, `<!doctype html><html><head><style>${CSS}</style></head><body>${content}</body></html>`);
+  const { meta } = save(lib, { file: src, name: category === "button" ? "슬롯 버튼" : "플랜 표", category, viewport: "800x400" });
   const ed = await startEditor({ lib, id: meta.id, token: "t".repeat(32) });
   return { lib, id: meta.id, ed, dir: join(lib, meta.id), T: { "x-webd-token": "t".repeat(32) } };
 }
@@ -183,6 +183,29 @@ test("편집 서버: 저장하면 새 버전·history, 그새 파일이 바뀌�
 
     assert.equal((await req(p, "POST", `/api/${eid}/save`, { headers: T, body: { html: "<p>조각</p>", baseHash: forced.json.hash } })).status, 400);
     assert.equal((await req(p, "POST", `/api/${eid}/draft`, { headers: T, body: "null" })).status, 200);
+  } finally { await ed.close(); }
+});
+
+test("편집 서버: button 강제 저장도 비교 화면은 거절하고 초안과 현재 버전을 보존한다", async () => {
+  const { id, ed, T, dir } = await setup({ category: "button", content: '<button class="plan-row">슬롯</button>' });
+  try {
+    const path = `/api/${encodeURIComponent(id)}`;
+    const original = (await req(ed.port, "GET", path, { headers: T })).json;
+    const draft = { baseHash: original.hash, styles: styleBlocks(original.html), log: [] };
+    assert.equal((await req(ed.port, "POST", path + "/draft", { headers: T, body: draft })).status, 200);
+    const invalid = original.html.replace("</body>", "<button>상태 견본</button></body>");
+    const rejected = await req(ed.port, "POST", path + "/save", { headers: T, body: { html: invalid, force: true } });
+    assert.equal(rejected.status, 422);
+    assert.match(rejected.json.error, /컨트롤 하나/);
+    const after = (await req(ed.port, "GET", path, { headers: T })).json;
+    assert.equal(after.html, original.html);
+    assert.equal(after.meta.versions, 1);
+    assert.deepEqual(after.draft.styles, draft.styles);
+    assert.equal(existsSync(join(dir, "history")), false);
+    const valid = original.html.replace("24px", "28px");
+    const saved = await req(ed.port, "POST", path + "/save", { headers: T, body: { html: valid, baseHash: original.hash } });
+    assert.equal(saved.status, 200, saved.text);
+    assert.equal(saved.json.meta.versions, 2);
   } finally { await ed.close(); }
 });
 

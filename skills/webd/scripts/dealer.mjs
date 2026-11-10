@@ -222,8 +222,8 @@ function describe(h, n, rule = {}) {
     n, family: h.family, familyName: fam.name, borrow: h.borrow, dominant: h.borrow[0].axis,
     discipline: h.discipline, disciplineDesc: DISCIPLINES[h.discipline], hue: h.hue, signature: h.signature, axes, warning: h.warning,
     strategy: h.strategy, strategyDesc: COLOR_STRATEGIES[h.strategy],
-    // 따뜻한 황토·테라코타 색상: 크림·종이 바탕과 짝지으면 Claude 자신의 기본값(visual-quality.md 7절)
-    caution: h.hue >= 20 && h.hue <= 85 ? "색상이 황토·테라코타 범위: 크림·종이 바탕과 짝짓지 말 것 (Claude 기본값)" : null,
+    // 따뜻한 황토·테라코타 색상: 크림·종이 바탕과 짝지으면 모델이 따뜻한 주제에서 습관적으로 고르는 기본값(visual-quality.md 7절)
+    caution: h.hue >= 20 && h.hue <= 85 ? "색상이 황토·테라코타 범위: 크림·종이 바탕과 짝짓지 말 것 (따뜻한 주제의 모델 기본값)" : null,
     palette: `node palette.mjs --seed ${h.hue}`,
   };
 }

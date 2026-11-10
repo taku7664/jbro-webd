@@ -9,6 +9,10 @@
 // "HTML 복사"·재사용 때 전환용 코드가 따라가지 않는다. srcdoc 문서는 목록 페이지와 같은 출처가 된다
 // (라이브러리에는 사용자가 직접 저장한 파일만 들어간다는 위 전제와 같다).
 
+import { readFileSync } from "node:fs";
+
+const UI_THEME = readFileSync(new URL("../editor/theme.css", import.meta.url), "utf8");
+
 export const NEUTRAL_BG = { light: "#E2E6E8", dark: "#2C3236" };
 
 /** 중립 배경 미리보기용 문서. 브라우저 쪽 스크립트에도 그대로 들어가므로 바깥 변수를 쓰지 않는다. */
@@ -45,35 +49,22 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WebD 컴포넌트 라이브러리</title>
+<style>${UI_THEME}</style>
 <style>
-  :root {
-    --bg: #E9ECEC; --panel: #F6F7F7; --line: #C3CACC; --text: #14191C; --muted: #4F5A61;
-    --accent: #1B3FA0; --on-accent: #F6F7F7; --focus: #1B3FA0;
-    --font: "Pretendard Variable", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-    --mono: "D2Coding", "Consolas", "SFMono-Regular", monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #111517; --panel: #1A2023; --line: #33403F; --text: #E6EAEB; --muted: #A3AFB4;
-            --accent: #8FA8F0; --on-accent: #111517; --focus: #8FA8F0; }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 400 15px/1.6 var(--font); word-break: keep-all; }
-  ::selection { background: var(--accent); color: var(--on-accent); }
+  body { margin: 0; font: 400 15px/1.6 var(--font); }
   a { color: inherit; text-underline-offset: 3px; }
-  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-  .page { max-width: 1440px; margin: 0 auto; padding: 32px 24px 64px; }
+  .page { max-width: 1440px; margin: 0 auto; padding: 24px 24px 64px; }
   header.top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px 24px;
-               padding-bottom: 20px; border-bottom: 2px solid var(--text); }
-  h1 { margin: 0; font-size: 28px; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; }
-  .where { margin: 0; color: var(--muted); font-size: 13px; }
+               padding: 20px 24px; border-radius: 6px; }
+  h1 { font-size: 26px; font-weight: 700; }
+  .where { font-size: 12px; }
   .where code { font-family: var(--mono); font-size: 12px; }
 
   .bar { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(2, minmax(120px, 1fr)) minmax(260px, 2fr) minmax(160px, 1fr);
-         gap: 12px; align-items: end; padding: 16px 0; border-bottom: 1px solid var(--line); }
+         gap: 12px; align-items: end; padding: 18px; margin-top: 18px; }
   .bar label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: var(--muted); }
-  .bar input, .bar select { font: inherit; font-size: 14px; color: var(--text); background: var(--panel);
-                            border: 1px solid var(--line); border-radius: 3px; padding: 7px 9px; min-height: 38px; width: 100%; }
+  .bar input, .bar select { font: inherit; font-size: 14px; padding: 7px 9px; min-height: 38px; width: 100%; }
   .period { display: grid; grid-template-columns: 1fr auto 1fr; gap: 6px; align-items: center; }
   .period span { color: var(--muted); }
   .status { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0 0; font-size: 13px; color: var(--muted); }
@@ -101,10 +92,12 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
   .group h2 small { font-size: 13px; font-weight: 400; color: var(--muted); font-family: var(--mono); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 20px; }
 
-  .item { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: flex; flex-direction: column; min-width: 0; }
+  .item { display: flex; flex-direction: column; min-width: 0; }
   .item:hover { border-color: var(--muted); }
-  .frame { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); background: #fff; border-radius: 4px 4px 0 0; }
+  .frame { position: relative; overflow: hidden; border-bottom: 1px solid var(--line); border-radius: 4px 4px 0 0; }
+  .frame:not(.ui-checkerboard) { background: var(--panel); }
   .frame iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; pointer-events: none; }
+  .frame.ui-checkerboard iframe { color-scheme: light; }
   .body { padding: 14px 16px 16px; display: grid; gap: 6px; flex: 1; }
   .name { margin: 0; font-size: 16px; font-weight: 700; line-height: 1.35; }
   .name a { text-decoration: none; }
@@ -118,8 +111,7 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
   .chips button[data-kind="category"] { border-color: var(--accent); color: var(--accent); }
   .chips button:hover { background: var(--bg); }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
-  .actions a, .actions button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; border-radius: 3px; cursor: pointer;
-                                border: 1px solid var(--line); background: transparent; color: var(--text); text-decoration: none; }
+  .actions a, .actions button { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 12px; text-decoration: none; }
   .actions .primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .empty { margin: 48px 0; color: var(--muted); }
   .empty strong { display: block; color: var(--text); font-size: 18px; margin-bottom: 4px; }
@@ -141,18 +133,18 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
 </head>
 <body>
 <div class="page">
-  <header class="top">
-    <h1>컴포넌트 라이브러리</h1>
-    <p class="where"><span id="total"></span> · 생성 <time>${esc(generatedAt.slice(0, 16).replace("T", " "))}</time> · <code>${esc(libPath)}</code></p>
+  <header class="top ui-top">
+    <h1 class="ui-title">컴포넌트 라이브러리</h1>
+    <p class="where ui-meta"><span id="total"></span> · 생성 <time>${esc(generatedAt.slice(0, 16).replace("T", " "))}</time> · <code>${esc(libPath)}</code></p>
   </header>
 
-  <form class="bar" id="bar" role="search" onsubmit="return false">
-    <label class="q">검색<input id="q" type="search" placeholder="이름, 설명, 태그" autocomplete="off"></label>
-    <label>분류<select id="category"><option value="">전체</option>${categories.map((c) => `<option value="${c}">${CATEGORY_LABEL[c] ?? c}</option>`).join("")}</select></label>
-    <label>태그<select id="tag"><option value="">전체</option></select></label>
+  <form class="bar ui-surface" id="bar" role="search" onsubmit="return false">
+    <label class="q">검색<input id="q" class="ui-control" type="search" placeholder="이름, 설명, 태그" autocomplete="off"></label>
+    <label>분류<select id="category" class="ui-control"><option value="">전체</option>${categories.map((c) => `<option value="${c}">${CATEGORY_LABEL[c] ?? c}</option>`).join("")}</select></label>
+    <label>태그<select id="tag" class="ui-control"><option value="">전체</option></select></label>
     <div class="period-wrap"><label>기간 <span class="sr">(정렬 기준 날짜로 거름)</span>
-      <span class="period"><input id="from" type="date" aria-label="시작일"><span>~</span><input id="to" type="date" aria-label="종료일"></span></label></div>
-    <label>정렬<select id="sort">
+      <span class="period"><input id="from" class="ui-control" type="date" aria-label="시작일"><span>~</span><input id="to" class="ui-control" type="date" aria-label="종료일"></span></label></div>
+    <label>정렬<select id="sort" class="ui-control">
       <option value="created:desc">저장일 최신순</option>
       <option value="created:asc">저장일 오래된순</option>
       <option value="updated:desc">수정일 최신순</option>
@@ -242,7 +234,7 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
     const iframe = el("iframe", { src: href, title: d.name + " 미리보기", loading: "lazy", tabindex: "-1",
                                   width: String(vp.width), height: String(vp.height) });
     if (bgMode === "neutral") iframe.srcdoc = neutralDoc(d.html, "./" + encodeURIComponent(d.id) + "/");
-    const frame = el("div", { class: "frame", "data-w": vp.width, "data-h": vp.height }, iframe);
+    const frame = el("div", { class: d.background ? "frame" : "frame ui-checkerboard", "data-w": vp.width, "data-h": vp.height }, iframe);
     const chips = el("ul", { class: "chips", "aria-label": "분류와 태그" },
       el("li", {}, el("button", { type: "button", "data-kind": "category", text: LABEL[d.category] || d.category, onclick: () => { els.category.value = d.category; update(); } })),
       ...d.tags.map((t) => el("li", {}, el("button", { type: "button", text: "#" + t, onclick: () => { els.tag.value = t; update(); } }))));
@@ -252,11 +244,11 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
       d.versions > 1 ? el("li", { text: "버전 " + d.versions }) : null,
       d.source && d.source.project ? el("li", { text: "출처 " + d.source.project }) : null);
     const actions = el("div", { class: "actions" },
-      el("a", { class: "primary", href, target: "_blank", rel: "noopener", text: "열기" }),
-      el("button", { type: "button", text: "편집", title: "CSS 편집 서버를 여는 명령을 복사합니다", onclick: () => copy(EDIT_CMD(d.id), "편집 명령을 복사했습니다. 터미널에 붙여 넣으면 편집 화면이 열립니다.") }),
-      el("button", { type: "button", text: "HTML 복사", onclick: () => copy(d.html, "HTML을 복사했습니다") }),
-      el("button", { type: "button", text: "ID 복사", onclick: () => copy(d.id, "ID를 복사했습니다: " + d.id) }));
-    return el("article", { class: "item" }, frame,
+      el("a", { class: "primary ui-primary", href, target: "_blank", rel: "noopener", text: "열기" }),
+      el("button", { type: "button", class: "ui-control", text: "편집", title: "CSS 편집 서버를 여는 명령을 복사합니다", onclick: () => copy(EDIT_CMD(d.id), "편집 명령을 복사했습니다. 터미널에 붙여 넣으면 편집 화면이 열립니다.") }),
+      el("button", { type: "button", class: "ui-control", text: "HTML 복사", onclick: () => copy(d.html, "HTML을 복사했습니다") }),
+      el("button", { type: "button", class: "ui-control", text: "ID 복사", onclick: () => copy(d.id, "ID를 복사했습니다: " + d.id) }));
+    return el("article", { class: "item ui-surface" }, frame,
       el("div", { class: "body" },
         el("h3", { class: "name" }, el("a", { href, target: "_blank", rel: "noopener", text: d.name })),
         d.description ? el("p", { class: "desc", text: d.description }) : null,

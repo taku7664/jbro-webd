@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>컴포넌트 CSS 편집</title>
+<link rel="stylesheet" href="/assets/theme.css">
+<link rel="stylesheet" href="/assets/editor.css">
+</head>
+<body>
+<header class="top ui-top">
+  <div class="title">
+    <h1 id="name" class="ui-title">불러오는 중…</h1>
+    <p class="sub ui-meta"><code id="cid"></code> · <span id="ver"></span></p>
+  </div>
+  <div class="tools" role="toolbar" aria-label="편집 도구">
+    <label class="field">미리보기 폭<select id="vp" class="ui-chrome-control"></select></label>
+    <button type="button" id="pick" class="toggle ui-chrome-control" aria-pressed="false" title="켜면 미리보기에서 편집할 요소를 고르고, 끄면 컴포넌트를 직접 조작합니다">요소 선택</button>
+    <button type="button" id="all" class="toggle ui-chrome-control" aria-pressed="false" title="모든 요소의 margin·padding 영역을 한꺼번에 보여 줍니다">전체 간격 보기</button>
+    <span class="sep" aria-hidden="true"></span>
+    <button type="button" id="undo" class="ui-chrome-control" title="되돌리기 (Ctrl+Z)">되돌리기</button>
+    <button type="button" id="redo" class="ui-chrome-control" title="다시 실행 (Ctrl+Shift+Z)">다시 실행</button>
+    <span id="state" class="state" aria-live="polite">저장됨</span>
+    <button type="button" id="save" class="primary ui-primary" title="저장 (Ctrl+S)" disabled>저장</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" role="alert" hidden></div>
+
+<main class="work">
+  <nav class="mobile-views" aria-label="편집 영역 전환">
+    <button type="button" data-view="tree" aria-pressed="true">구조</button>
+    <button type="button" data-view="preview" aria-pressed="false">미리보기</button>
+    <button type="button" data-view="style" aria-pressed="false">인스펙터</button>
+  </nav>
+  <aside class="tree-panel" aria-label="HTML 요소 트리">
+    <div class="tree-heading"><h2>하이라키</h2><span id="tree-count"></span></div>
+    <div id="tree" class="tree-scroll" role="tree" aria-label="컴포넌트 본문 요소"></div>
+  </aside>
+  <section class="stage-wrap" aria-label="미리보기">
+    <div class="legend" aria-hidden="true">
+      <span class="stage-caption"><span id="preview-bg">조각 원본 배경</span> · <output id="preview-size"></output></span>
+      <span><i class="lg-m"></i>margin</span><span><i class="lg-b"></i>border</span><span><i class="lg-p"></i>padding</span><span><i class="lg-c"></i>content</span>
+    </div>
+    <div class="stage" id="stage">
+      <div class="canvas" id="canvas">
+        <iframe id="frame" title="컴포넌트 미리보기"></iframe>
+        <div class="overlay" id="overlay" aria-hidden="true"></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="panel" aria-label="스타일 인스펙터">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules">인스펙터</button>
+      <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css">CSS 원문</button>
+    </div>
+    <div class="pane" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
+      <p class="hint" id="hint">왼쪽 HTML 요소 트리에서 대상을 고르거나, 상단의 ‘요소 선택’을 켜고 미리보기에서 고르세요. 값을 고치면 바로 반영되고, 저장해야 파일에 남습니다.</p>
+      <div id="rules"></div>
+    </div>
+    <div class="pane" id="pane-css" role="tabpanel" aria-labelledby="tab-css" hidden>
+      <p class="hint">컴포넌트의 &lt;style&gt; 원문입니다. 고치는 대로 미리보기에 반영됩니다.</p>
+      <div id="blocks"></div>
+    </div>
+  </aside>
+</main>
+
+<script type="module" src="/assets/editor-app.mjs"></script>
+</body>
+</html>

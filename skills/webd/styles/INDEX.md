@@ -51,3 +51,14 @@ node "<스킬 폴더>/scripts/check-style.mjs" "<스킬 폴더>/styles"
 | museum label | 미술관 캡션, 전시 | `museum-label.md` | 넓은 벽, 큰 작품, 작고 정확한 캡션 | Experience |
 | cinema dark | 시네마틱, 영화 | `cinema-dark.md` | 색조 있는 어둠, 한 방향의 빛, 화면 폭 제목 | Experience, Persuade |
 | pixel arcade | 픽셀, 8비트, 레트로 게임 | `pixel-arcade.md` | 계단형 모서리, 점수판, steps() 모션 | Experience, Persuade |
+
+## 게임 (Play)
+
+게임 레퍼런스 사양은 타입·구성·조작과 색의 역할을 정의합니다. 색 값과 대비 표는 실제 프로젝트의 `DESIGN.md`에서 정하고 검증합니다. 고정 팔레트가 있는 위 스타일 사양은 저장소의 `check-style` 검사를 따릅니다.
+
+| 이름 | 한국어로 | 파일 | 한 줄 설명 | 모드 |
+|---|---|---|---|---|
+| game sao holo | SAO 풍, 단계형 홀로 메뉴 | `game/game-sao-holo.md` | 원형 메뉴에서 오른쪽으로 이어지는 사선 패널과 선택 띠 | Play |
+| game skill tree | 다이아몬드 스킬 트리, 어쌔신 크리드식 | `game/game-skill-tree.md` | 영역 세 개와 원형 노드, 선행 관계 연결선 | Play |
+| game character sheet | 캐릭터 도감, 방패 용사식 | `game/game-character-sheet.md` | 인물 중심, 원형 레벨 게이지, 능력치 목록 | Play |
+| game fantasy inventory | 판타지 장비 인벤토리 | `game/game-fantasy-inventory.md` | 슬롯 격자, 장비 실루엣, 탭과 조작 안내 | Play |

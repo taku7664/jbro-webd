@@ -7,7 +7,7 @@
 
 ## 타입
 
-- 제목·라벨: 좁은 기술 고딕(Barlow Semi Condensed 등) + 한글 고딕(SUIT, Pretendard) 
+- 제목·라벨: 좁은 기술 고딕(Barlow Semi Condensed 등) + 한글 고딕(SUIT, Pretendard)
 - 본문: 같은 고딕 400, 16px
 - 치수·도면 번호: 라틴 고정폭(IBM Plex Mono) + 한글 대체 지정
 - 스케일 1.25

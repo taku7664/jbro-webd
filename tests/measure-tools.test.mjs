@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deflateSync, crc32 } from "node:zlib";
 import { imageTokens } from "../skills/webd/scripts/image-tokens.mjs";
+import { measurePixels } from "../skills/webd/scripts/browser/image-measure.mjs";
 import { inventory } from "../skills/webd/scripts/css-inventory.mjs";
 import { findBrowser } from "../skills/webd/scripts/render-check.mjs";
 
@@ -17,6 +18,31 @@ const here = dirname(fileURLToPath(import.meta.url));
 const scripts = join(here, "..", "skills", "webd", "scripts");
 const run = (file, ...a) => spawnSync(process.execPath, [join(scripts, file), ...a], { encoding: "utf8", timeout: 120000 });
 const skip = findBrowser() ? false : "Chrome·Edge·Chromium 없음";
+
+test("이미지 계산: 가까운 OKLab 버킷은 합치고 흰색과 검정의 대비는 21", () => {
+  const data = Uint8ClampedArray.from([
+    255, 255, 255, 255, 246, 246, 246, 255, 255, 255, 255, 255,
+    0, 0, 0, 255, 255, 0, 0, 0,
+  ]);
+  const result = measurePixels({ data, width: 5, height: 1 }, 10, [
+    { x: 0, y: 0, pixel: [255, 255, 255, 255] }, { x: 5, y: 0, pixel: null },
+  ]);
+  assert.deepEqual(result.colors.map(({ hex, area }) => [hex, area]), [["#fcfcfc", 0.75], ["#000000", 0.25]]);
+  assert.equal(result.colors[0].oklch.h, null);
+  assert.ok(result.colors[1].contrastToBg > 20);
+  assert.equal(result.samples[1].error, "이미지 밖");
+  const white = measurePixels({ data: data.slice(0, 4), width: 1, height: 1 }, 10, [{ x: 0, y: 1, pixel: [0, 0, 0, 255] }]);
+  assert.equal(white.samples[0].contrastToBg, 21);
+  assert.throws(() => measurePixels({ data: data.slice(-4), width: 1, height: 1 }), /불투명한 픽셀/);
+});
+
+test("이미지 계산: 가로 3픽셀 이상의 색만 포인트 후보로 삼는다", () => {
+  const row = [[252, 252, 250], [36, 123, 181], [36, 123, 181], [36, 123, 181], [252, 252, 250], [220, 40, 40], [252, 252, 250]];
+  const data = Uint8ClampedArray.from([...row, ...Array(7).fill([252, 252, 250])].flatMap((pixel) => [...pixel, 255]));
+  const result = measurePixels({ data, width: row.length, height: 2 });
+  assert.equal(result.roles.background, "#fcfcfa");
+  assert.deepEqual(result.roles.accentCandidates.map(({ hex }) => hex), ["#247bb5"]);
+});
 
 // 의존성 없이 RGB PNG 만들기
 function png(w, h, pixel) {

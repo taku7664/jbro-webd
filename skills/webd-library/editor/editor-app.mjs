@@ -19,9 +19,10 @@ const STATE_PSEUDO = /:(hover|focus|focus-visible|focus-within|active|visited|ta
 
 const S = {
   meta: null, source: "", hash: "", saved: [], styles: [], undo: [], redo: [], log: [],
-  selected: null, selPath: null, hovered: null, pick: true, all: false, editable: true, editing: null, conflict: false,
+  selected: null, selPath: null, hovered: null, pick: false, all: false, editable: true, editing: null, conflict: false,
 };
 let win = null, doc = null, styleEls = [], needDraw = true, draftTimer = null, firstLoad = true;
+const collapsed = new Set();
 
 // ---------- 서버 ----------
 
@@ -36,6 +37,8 @@ async function load() {
   if (!r.ok) { banner(`불러오지 못했습니다 (${r.status}). 터미널에 나온 주소로 다시 여세요.`); return; }
   const d = await r.json();
   S.meta = d.meta; S.source = d.html; S.hash = d.hash; S.conflict = false;
+  $("canvas").classList.toggle("ui-checkerboard", !d.meta.background);
+  $("preview-bg").textContent = d.meta.background ? "조각 원본 배경" : "투명 배경";
   S.saved = styleBlocks(d.html);
   S.styles = S.saved.slice(); S.undo = []; S.redo = []; S.log = []; S.editing = null;
   $("name").textContent = d.meta.name;
@@ -66,7 +69,7 @@ async function save(force = false) {
   const d = await r.json().catch(() => ({}));
   if (r.status === 409) {
     S.conflict = true; updateState();
-    banner("편집을 시작한 뒤 파일이 바뀌어 저장하지 않았습니다(Claude나 다른 창에서 저장한 것으로 보입니다).", [
+    banner("편집을 시작한 뒤 파일이 바뀌어 저장하지 않았습니다(다른 작업이나 창에서 저장한 것으로 보입니다).", [
       ["내 화면 내용으로 덮어쓰기", () => save(true)],
       ["파일 다시 불러오기 (화면 변경 버림)", () => discardAndReload()],
     ]);
@@ -102,7 +105,7 @@ function listen() {
     if (!d.hash || d.hash === S.hash) return;
     if (!isDirty()) { load().then(() => setState("파일이 바뀌어 다시 불러옴")); return; }
     S.conflict = true; updateState();
-    banner("파일이 밖에서 바뀌었습니다(Claude가 고쳤거나 다른 창에서 저장). 화면에 저장하지 않은 변경이 있습니다.", [
+    banner("파일이 밖에서 바뀌었습니다(다른 작업이나 창에서 저장). 화면에 저장하지 않은 변경이 있습니다.", [
       ["파일 다시 불러오기 (화면 변경 버림)", () => discardAndReload()],
       ["화면 변경 유지", () => hideBanner()],
     ]);
@@ -158,10 +161,16 @@ function applyStyles() {
 function setupViewports(vp) {
   const sel = $("vp");
   const saved = vp?.width || 1200;
-  const opts = [[String(saved), `${saved}px (저장 크기)`], ...[1440, 1200, 768, 375].filter((w) => w !== saved).map((w) => [String(w), `${w}px`]), ["fit", "패널 폭에 맞춤"]];
+  const height = vp?.height || 720;
+  const opts = [[String(saved), `${saved}×${height}px (저장 크기)`], ...[1440, 1200, 768, 375].filter((w) => w !== saved).map((w) => [String(w), `${w}px`]), ["fit", "패널 폭에 맞춤"]];
   for (const [v, t] of opts) sel.append(new Option(t, v));
-  sel.value = String(saved);
-  const apply = () => { $("canvas").style.width = sel.value === "fit" ? "100%" : sel.value + "px"; needDraw = true; };
+  sel.value = matchMedia("(max-width: 1400px)").matches ? "fit" : String(saved);
+  const apply = () => {
+    $("canvas").style.width = sel.value === "fit" ? "100%" : sel.value + "px";
+    $("canvas").style.height = height + "px";
+    $("preview-size").textContent = `${sel.value === "fit" ? "패널 폭" : sel.value + "px"} × ${height}px`;
+    needDraw = true;
+  };
   sel.addEventListener("change", apply); apply();
 }
 
@@ -170,7 +179,7 @@ $("frame").addEventListener("load", () => {
   if (!doc) { banner("미리보기 문서에 접근하지 못했습니다."); return; }
   styleEls = [...doc.querySelectorAll("style")];
   S.editable = styleEls.length === S.saved.length && styleEls.every((el, i) => norm(el.textContent) === norm(S.saved[i]));
-  if (!S.editable) banner("이 컴포넌트는 스크립트가 <style>을 더하거나 바꿔서 화면에서 편집할 수 없습니다. 고칠 내용을 Claude에게 말로 요청하세요.");
+  if (!S.editable) banner("이 컴포넌트는 스크립트가 <style>을 더하거나 바꿔서 화면에서 편집할 수 없습니다. 고칠 내용을 에이전트에게 말로 요청하세요.");
   applyStyles();
   doc.addEventListener("mousemove", (e) => { if (!S.pick) return; const t = e.target; S.hovered = t && t.nodeType === 1 && t !== doc.documentElement ? t : null; needDraw = true; }, true);
   doc.addEventListener("mouseleave", () => { S.hovered = null; needDraw = true; });
@@ -180,17 +189,81 @@ $("frame").addEventListener("load", () => {
   win.addEventListener("scroll", () => { needDraw = true; }, { passive: true });
   win.addEventListener("resize", () => { needDraw = true; });
   S.selected = S.selPath ? resolvePath(S.selPath) : null;
-  renderPanel(); renderBlocks(); updateState();
+  renderTree(); renderPanel(); renderBlocks(); updateState();
+  new MutationObserver(() => {
+    if (S.selected && !S.selected.isConnected) { S.selected = null; S.selPath = null; needDraw = true; renderPanel(); }
+    else if (S.selected) S.selPath = pathOf(S.selected);
+    renderTree();
+  }).observe(doc.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["id", "class"] });
 });
 
 function pathOf(el) { const p = []; while (el && el.parentElement) { p.unshift([...el.parentElement.children].indexOf(el)); el = el.parentElement; } return p; }
 function resolvePath(p) { let el = doc.documentElement; for (const i of p) { el = el?.children[i]; if (!el) return null; } return el; }
 
-function select(el) {
+function select(el, focusTree = false) {
   if (!el || el.nodeType !== 1) return;
   if (S.editing) commitEditing();
   S.selected = el; S.selPath = pathOf(el); needDraw = true;
+  for (let n = el.parentElement; n && n !== doc.documentElement; n = n.parentElement) collapsed.delete(pathOf(n).join("."));
+  renderTree();
+  if (focusTree && !matchMedia("(max-width: 760px)").matches) $("tree").querySelector('[aria-selected="true"] > .tree-row > .tree-pick')?.focus();
+  if (matchMedia("(max-width: 760px)").matches) showMobilePane("style");
   showTab("rules"); renderPanel();
+}
+
+function renderTree() {
+  const root = $("tree");
+  if (!doc?.body) { root.replaceChildren(); $("tree-count").textContent = ""; return; }
+  const visualChildren = (node) => [...node.children].filter((child) => !["SCRIPT", "STYLE", "TEMPLATE"].includes(child.tagName));
+  const iconFor = (node) => {
+    const tag = node.tagName.toLowerCase();
+    if (tag === "body") return "layout-template";
+    if (tag === "button") return "mouse-pointer-2";
+    if (tag === "a") return "link";
+    if (tag === "img" || tag === "picture" || tag === "canvas" || tag === "video") return "image";
+    if (tag === "input" || tag === "textarea" || tag === "select") return "text-cursor-input";
+    if (tag === "label") return "tag";
+    if (tag === "svg") return "shapes";
+    if (["ul", "ol", "li", "dl", "dt", "dd"].includes(tag)) return "list";
+    if (["table", "thead", "tbody", "tr", "td", "th"].includes(tag)) return "table";
+    if (/^h[1-6]$/.test(tag)) return "heading";
+    if (tag === "p") return "align-left";
+    if (tag === "form") return "form-input";
+    if (tag === "span" || tag === "strong" || tag === "em" || tag === "small") return "type";
+    return "square";
+  };
+  function branch(node) {
+    const path = pathOf(node).join(".");
+    const children = visualChildren(node);
+    const item = document.createElement("div"); item.className = "tree-item"; item.dataset.path = path; item.setAttribute("role", "treeitem");
+    item.setAttribute("aria-selected", String(node === S.selected));
+    if (children.length) item.setAttribute("aria-expanded", String(!collapsed.has(path)));
+    const row = document.createElement("div"); row.className = "tree-row";
+    const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-toggle";
+    if (children.length) {
+      toggle.textContent = collapsed.has(path) ? "▸" : "▾";
+      toggle.setAttribute("aria-label", `${label(node)} 하위 요소 ${collapsed.has(path) ? "펼치기" : "접기"}`);
+      toggle.onclick = () => {
+        collapsed.has(path) ? collapsed.delete(path) : collapsed.add(path);
+        renderTree();
+        [...root.querySelectorAll(".tree-item")].find((item) => item.dataset.path === path)?.querySelector(":scope > .tree-row > .tree-toggle")?.focus();
+      };
+    } else { toggle.disabled = true; toggle.setAttribute("aria-hidden", "true"); }
+    const pick = document.createElement("button"); pick.type = "button"; pick.className = "tree-pick";
+    const icon = document.createElement("span"); icon.className = "tree-icon"; icon.setAttribute("aria-hidden", "true");
+    icon.style.maskImage = `url(/assets/icon-${iconFor(node)}.svg)`;
+    pick.append(icon, document.createTextNode(label(node)));
+    pick.title = label(node); pick.onclick = () => select(node, true);
+    row.append(toggle, pick); item.append(row);
+    if (children.length && !collapsed.has(path)) {
+      const group = document.createElement("div"); group.className = "tree-children"; group.setAttribute("role", "group");
+      for (const child of children) group.append(branch(child));
+      item.append(group);
+    }
+    return item;
+  }
+  root.replaceChildren(branch(doc.body));
+  $("tree-count").textContent = `${1 + [...doc.body.querySelectorAll("*")].filter((node) => !["SCRIPT", "STYLE", "TEMPLATE"].includes(node.tagName)).length}개 요소`;
 }
 
 // ---------- 박스 모델 오버레이 ----------
@@ -383,6 +456,7 @@ function renderPanel() {
       el("header", {}, sel, el("span", { class: "where", text: `${S.styles.length > 1 ? `스타일 ${m.bi + 1} · ` : ""}${lineOf(S.styles[m.bi], m.rule.bodyStart)}행` })),
       m.rule.media.length ? el("div", { class: "media", text: m.rule.media.join(" › ") }) : null,
       m.state ? el("div", { class: "media", text: `${m.state} 상태일 때만 적용` }) : null);
+    card.append(el("div", { class: "decl-head", "aria-hidden": "true" }, el("span", { text: "속성" }), el("span", { text: "값" })));
     const list = el("ul", { class: "decls" });
     m.rule.decls.forEach((d, di) => list.append(declRow(m.bi, m.rule.index, di, d, { over: over.has(`${m.bi}:${m.rule.index}:${di}`), cs })));
     card.append(list);
@@ -394,7 +468,7 @@ function renderPanel() {
   }
 
   if (target.hasAttribute("style")) {
-    root.append(el("p", { class: "note", text: `이 요소에는 style 속성이 있습니다: ${target.getAttribute("style")} — style 속성은 화면에서 고치지 않습니다. 필요하면 Claude에게 말로 요청하세요.` }));
+    root.append(el("p", { class: "note", text: `이 요소에는 style 속성이 있습니다: ${target.getAttribute("style")} — style 속성은 화면에서 고치지 않습니다. 필요하면 에이전트에게 말로 요청하세요.` }));
   }
 
   if (keep) { const k = root.querySelector(`[data-key="${CSS.escape(keep)}"]`); if (k) { k.focus(); if (k.setSelectionRange) k.setSelectionRange(k.value.length, k.value.length); } }
@@ -519,6 +593,13 @@ function renderBlocks() {
 
 // ---------- 탭·도구 ----------
 
+function showMobilePane(which) {
+  document.body.dataset.mobilePane = which;
+  for (const button of document.querySelectorAll(".mobile-views button")) button.setAttribute("aria-pressed", String(button.dataset.view === which));
+}
+for (const button of document.querySelectorAll(".mobile-views button")) button.onclick = () => showMobilePane(button.dataset.view);
+showMobilePane("tree");
+
 function showTab(which) {
   for (const [t, p] of [["tab-rules", "pane-rules"], ["tab-css", "pane-css"]]) {
     const on = t === `tab-${which}`; $(t).setAttribute("aria-selected", String(on)); $(p).hidden = !on;
@@ -537,7 +618,7 @@ function onKey(e) {
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
   else if (mod && !typing && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
   else if (mod && !typing && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
-  else if (e.key === "Escape" && !typing && S.selected) { S.selected = null; S.selPath = null; needDraw = true; renderPanel(); }
+  else if (e.key === "Escape" && !typing && S.selected) { S.selected = null; S.selPath = null; needDraw = true; renderTree(); renderPanel(); }
 }
 document.addEventListener("keydown", onKey);
 addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });

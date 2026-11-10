@@ -22,7 +22,7 @@
 // 종료 코드: 0 성공 · 1 사용 오류 · 3 대상 없음
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, renameSync, copyFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { extname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
@@ -162,27 +162,76 @@ function parseViewport(v) {
   return { width: Number(m[1]), height: Number(m[2]) };
 }
 
+// 버튼 분류의 정적 경계 검사. 실제 가시성·스크립트로 바뀌는 DOM은 브라우저에서 확인한다.
+const TAG_ATTRS = String.raw`(?=[\s/>])((?:[^<>"']|"[^"]*"|'[^']*')*)`;
+function buttonAttributes(raw) {
+  return new Map([...raw.matchAll(/([^\s=/>]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g)]
+    .map(([, name, double, single, bare]) => [name.toLowerCase(), double ?? single ?? bare ?? ""]));
+}
+
+function isSingleButton(html) {
+  // 속성값 속의 <button>이나 CSS·JS 예제 문자열은 조작 요소로 세지 않는다.
+  const source = html.replace(new RegExp(
+    String.raw`<!--[\s\S]*?(?:-->|$)|<(script|style|title|template)${TAG_ATTRS}>[\s\S]*?</\1\s*>|</?[a-z][\w:-]*${TAG_ATTRS}>`, "gi",
+  ), (tag, inert) => inert || tag.startsWith("<!--") ? "" : tag);
+  const shell = new RegExp(String.raw`^\s*(?:<!doctype[^>]*>\s*)?(?:<html${TAG_ATTRS}>\s*)?(?:<head${TAG_ATTRS}>[\s\S]*?</head\s*>\s*)?`, "i");
+  const content = source.replace(shell, "").replace(/<\/html\s*>\s*$/i, "").trim();
+  const body = new RegExp(String.raw`^<body${TAG_ATTRS}>([\s\S]*?)(?:</body\s*>)?$`, "i").exec(content);
+  const isHidden = attrs => attrs.has("hidden") || attrs.has("inert") || attrs.get("aria-hidden")?.toLowerCase() === "true";
+  const isInteractive = attrs => attrs.has("tabindex") || attrs.has("contenteditable") && attrs.get("contenteditable") !== "false"
+    || /^(button|link|checkbox|radio|switch|menuitem|option|tab)$/i.test(attrs.get("role") ?? "");
+  if (body && isHidden(buttonAttributes(body[1]))) return false;
+  let fragment = (body?.[2] ?? content).trim();
+  const wrapper = new RegExp(String.raw`^<(div|main|section|span|center)${TAG_ATTRS}>([\s\S]*)</\1\s*>$`, "i");
+  for (let m; (m = wrapper.exec(fragment));) {
+    const attrs = buttonAttributes(m[2]);
+    if (isHidden(attrs) || isInteractive(attrs)) return false;
+    fragment = m[3].trim();
+  }
+  const input = new RegExp(String.raw`^<input${TAG_ATTRS}>$`, "i").exec(fragment);
+  if (input) {
+    const attrs = buttonAttributes(input[1]);
+    return !isHidden(attrs) && ["button", "submit", "reset", "image"].includes(attrs.get("type")?.toLowerCase());
+  }
+  const control = new RegExp(String.raw`^<(button|a)${TAG_ATTRS}>([\s\S]*)</\1\s*>$`, "i").exec(fragment);
+  if (!control) return false;
+  const attrs = buttonAttributes(control[2]);
+  if (isHidden(attrs) || control[1].toLowerCase() === "a" && !attrs.has("href")) return false;
+  const tags = control[3].matchAll(new RegExp(String.raw`</?([a-z][\w:-]*)${TAG_ATTRS}>`, "gi"));
+  const interactive = new Set(["button", "a", "input", "select", "textarea", "summary", "iframe"]);
+  return ![...tags].some(([, name, raw]) => interactive.has(name.toLowerCase()) || isInteractive(buttonAttributes(raw)));
+}
+
 // ---------- 명령 ----------
 
 export function save(lib, o) {
   if (!o.file) throw usage("save에는 --file이 필요합니다.");
   if (!o.name && !o.id) throw usage("save에는 --name이 필요합니다.");
   if (!existsSync(o.file)) throw usage(`파일이 없음: ${o.file}`);
+  if (![".html", ".htm"].includes(extname(o.file).toLowerCase())) throw usage("라이브러리에는 HTML 파일(.html 또는 .htm)을 저장합니다. PNG·스프라이트 시트·JSON은 별도 산출물입니다.");
   if (o.category && !CATEGORIES.includes(o.category)) throw usage(`분류는 ${CATEGORIES.join(", ")} 중 하나입니다.`);
   const viewport = o.viewport ? parseViewport(o.viewport) : null;
   if (o.viewport && !viewport) throw usage("--viewport는 1200x720 형식입니다.");
 
-  mkdirSync(lib, { recursive: true });
-  const now = localIso();
   const existing = o.id && existsSync(join(lib, o.id, "meta.json"))
     ? JSON.parse(readFileSync(join(lib, o.id, "meta.json"), "utf8")) : null;
+  const category = o.category ?? existing?.category ?? "other";
+  const name = o.name || existing?.name;
+  const bytes = readFileSync(o.file);
+  let source;
+  try { source = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); }
+  catch { throw Object.assign(usage("라이브러리에는 UTF-8 HTML만 저장합니다."), { status: 422 }); }
+  if (source.includes("\0")) throw Object.assign(usage("라이브러리에는 UTF-8 HTML만 저장합니다."), { status: 422 });
+  const html = ensureDocument(source, name);
+  if (category === "button" && !isSingleButton(html)) {
+    throw Object.assign(usage("button 분류는 조작 컨트롤 하나만 저장합니다. 상태 비교 화면이나 주변 설명을 떼고 버튼 또는 CTA 링크만 저장하세요."), { status: 422 });
+  }
 
+  mkdirSync(lib, { recursive: true });
+  const now = localIso();
   const id = existing ? existing.id : uniqueId(lib, o.id || `${now.slice(0, 10).replace(/-/g, "")}-${slugify(o.name)}`);
   const dir = join(lib, id);
   mkdirSync(dir, { recursive: true });
-
-  const name = o.name || existing?.name;
-  const html = ensureDocument(readFileSync(o.file, "utf8"), name);
 
   let versions = existing?.versions ?? 1;
   if (existing) {
@@ -201,7 +250,7 @@ export function save(lib, o) {
     id,
     name,
     description: o.desc ?? existing?.description ?? "",
-    category: o.category ?? existing?.category ?? "other",
+    category,
     tags: o.tags ? o.tags.split(",").map((t) => t.trim()).filter(Boolean) : (existing?.tags ?? []),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,

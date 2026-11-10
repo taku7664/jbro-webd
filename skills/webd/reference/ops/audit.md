@@ -6,8 +6,9 @@ critique가 "디자인이 좋은가"를 본다면, audit은 "구현이 버티는
 
 ```
 node "<스킬 폴더>/scripts/detect.mjs" <소스 폴더> --json
-node "<스킬 폴더>/scripts/render-check.mjs" <파일 또는 URL> --widths 320,375,768,1440 --scheme light,dark --json
 ```
+
+렌더는 내부 브라우저에서 `verify.md` 2절의 페이지 검사로 320·375·768·1440px을 확인합니다. 헤드리스 선택 경로는 `render-check.mjs <파일 또는 URL> --widths 320,375,768,1440 --scheme light,dark --json`입니다.
 
 dark를 지원하지 않는 화면이면 light만. 검사 결과는 근거이고 판정은 직접 합니다. 오탐은 오탐이라고 적습니다.
 

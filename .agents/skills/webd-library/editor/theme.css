@@ -1,0 +1,39 @@
+/* 라이브러리 목록과 편집기가 공유하는 UI 테마. gallery.mjs는 이 파일을 index.html에 포함한다. */
+:root {
+  color-scheme: light;
+  --bg: #EAE8E2; --panel: #FAF9F6; --line: #D7D4CB; --text: #242820; --muted: #666A62;
+  --accent: #A44625; --on-accent: #FFFFFF; --focus: #A44625; --code-bg: #FFFFFF; --stage: #DCD9D1;
+  --chrome: #FAF9F6; --chrome-line: #D7D4CB; --chrome-text: #242820; --chrome-muted: #666A62;
+  --chrome-control: #FFFFFF; --chrome-control-line: #C9C6BB; --chrome-control-hover: #F1EFE8; --chrome-control-hover-line: #8C8F86;
+  --chrome-toggle: #242820; --chrome-on-toggle: #FFFFFF; --chrome-dirty: #7A3C10;
+  --checker-a: #F3F1EB; --checker-b: #DEDAD1;
+  --font: "Pretendard Variable", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --mono: "D2Coding", "Consolas", "SFMono-Regular", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #1C201E; --panel: #252A27; --line: #424841; --text: #EEEDE7; --muted: #B8BEB5;
+    --accent: #EBA17D; --on-accent: #271A13; --focus: #EBA17D; --code-bg: #1D221F; --stage: #141815;
+    --chrome: #252A27; --chrome-line: #424841; --chrome-text: #EEEDE7; --chrome-muted: #B8BEB5;
+    --chrome-control: #303A32; --chrome-control-line: #586257; --chrome-control-hover: #39453B; --chrome-control-hover-line: #B6C2B3;
+    --chrome-toggle: #EEEDE7; --chrome-on-toggle: #252A27; --chrome-dirty: #F2D59A;
+    --checker-a: #303630; --checker-b: #454C45;
+  }
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); word-break: keep-all; }
+::selection { background: var(--accent); color: var(--on-accent); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
+.ui-top { background: var(--chrome); color: var(--chrome-text); border-bottom: 1px solid var(--chrome-line); }
+.ui-title { margin: 0; letter-spacing: -.025em; line-height: 1.25; }
+.ui-meta { margin: 3px 0 0; color: var(--chrome-muted); font-size: 11px; }
+.ui-surface { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+.ui-checkerboard { background: conic-gradient(var(--checker-a) 25%, var(--checker-b) 0 50%, var(--checker-a) 0 75%, var(--checker-b) 0) 0 0 / 20px 20px; }
+.ui-control { border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text); cursor: pointer; }
+.ui-control:hover { border-color: var(--muted); }
+.ui-chrome-control { border: 1px solid var(--chrome-control-line); border-radius: 5px; background: var(--chrome-control); color: var(--chrome-text); cursor: pointer; }
+.ui-chrome-control:not(:disabled):hover { border-color: var(--chrome-control-hover-line); background: var(--chrome-control-hover); }
+.ui-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+.ui-primary:hover { filter: brightness(1.08); }

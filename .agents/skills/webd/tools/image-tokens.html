@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebD 이미지 색 측정</title>
+<style>
+  :root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+  body { max-width: 48rem; margin: 2rem auto; padding: 0 1rem; }
+  form { display: grid; gap: .75rem; }
+  label { display: grid; gap: .25rem; }
+  #drop { border: 1px dashed; padding: 1rem; }
+  input, button, textarea { font: inherit; }
+  input, button { min-height: 2.5rem; }
+  textarea { display: block; width: 100%; box-sizing: border-box; margin: .5rem 0; font-family: monospace; }
+  #status { min-height: 1.5rem; }
+</style>
+<main>
+  <h1>이미지 색 측정</h1>
+  <p>이미지는 브라우저 안에서만 읽습니다. 측정값은 레퍼런스 분석에 쓰고 프로젝트 팔레트는 별도로 정합니다.</p>
+  <form>
+    <label id="drop">이미지 선택 또는 이곳에 끌어 놓기
+      <input id="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+    </label>
+    <label>측정 영역 (x,y,너비,높이)
+      <input id="crop" placeholder="비워 두면 전체 이미지">
+    </label>
+    <label>지점 (x,y, 여러 지점은 공백으로 구분)
+      <input id="points" placeholder="예시 120,40 150,80">
+    </label>
+    <label>최대 색 개수
+      <input id="colors" type="number" min="2" max="30" value="10" required>
+    </label>
+    <button id="measure" type="submit">측정</button>
+  </form>
+  <p id="status" role="status"></p>
+  <label>측정 결과 JSON
+    <textarea id="result" rows="14" readonly></textarea>
+  </label>
+  <button id="copy" type="button" disabled>JSON 복사</button>
+</main>
+<script type="module" src="./image-tokens-app.mjs"></script>
+</html>
