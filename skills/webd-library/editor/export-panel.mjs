@@ -9,6 +9,8 @@ const SLICE_LABEL = { none: "한 장", nine: "9-slice", "three-h": "3-slice 가�
 export function initExport(ctx) {
   const { pane, overlay } = ctx;
   let spec = null, defaultDir = "", lastExport = null, active = false;
+  let committed = null;        // 되돌리기 기록에 마지막으로 넣은 설정(바뀌면 이 값을 기록에 넣는다)
+  const clone = (v) => JSON.parse(JSON.stringify(v));
   let previewTimer = null, saveTimer = null, previewSeq = 0, busy = false;
   let preview = null;          // 마지막 미리보기 응답
   let estimateNote = "";
@@ -22,6 +24,7 @@ export function initExport(ctx) {
     spec = d.spec; defaultDir = d.defaultDir; lastExport = d.lastExport;
     // 미리보기 문서가 이미 있을 때만 대상 경로를 확인한다(아직이면 frameLoaded에서)
     if (ctx.frameDoc() && spec.target.kind === "element" && !ctx.resolve(spec.target.path)) spec.target = { kind: "root" };
+    committed = clone(spec);
     render();
     if (active) schedulePreview(0);
   }
@@ -178,6 +181,8 @@ export function initExport(ctx) {
   function showError(text) { const s = pane.querySelector(".xp-status"); if (s) { s.textContent = text; s.classList.add("err"); } }
 
   function changed({ preview: pv = true } = {}) {
+    // 바뀌기 전 설정을 편집기의 되돌리기 기록에 넣는다(CSS 변경과 같은 Ctrl+Z 순서)
+    if (committed && JSON.stringify(spec) !== JSON.stringify(committed)) { ctx.record?.(committed); committed = clone(spec); }
     persist();
     // 입력 중인 칸의 포커스를 지키며 다시 그린다
     const focusKey = document.activeElement?.dataset?.xp;
@@ -310,12 +315,18 @@ export function initExport(ctx) {
       if (spec.slice.mode !== "none") estimate(false);
       changed();
     },
+    /** 되돌리기·다시 실행: 지금 설정을 꺼내고, 기록의 설정으로 바꾼다 */
+    snapshot() { return spec ? clone(spec) : null; },
+    setSpec(next) {
+      spec = clone(next); committed = clone(next); estimateNote = "";
+      persist(); render(); schedulePreview(0); needDraw = true;
+    },
     stylesChanged() { needDraw = true; if (active) { schedulePreview(900); renderFooter(); } },
     frameLoaded() {
       needDraw = true;
       if (spec?.target.kind === "element" && !ctx.resolve(spec.target.path)) {
         const lost = spec.target.label;
-        spec.target = { kind: "root" }; render();
+        spec.target = { kind: "root" }; committed = clone(spec); render();
         setStatus(`저장된 대상(${lost})을 찾지 못해 조각 전체로 바꿨습니다.`);
       } else if (spec && active) render();
     },

@@ -135,21 +135,36 @@ function banner(text, actions = []) {
 function hideBanner() { $("banner").hidden = true; }
 
 /** 바꾸기 전 상태를 되돌리기 목록에 넣는다. */
-function record(pre = S.styles) { S.undo.push({ styles: pre.slice(), log: S.log.slice() }); if (S.undo.length > 200) S.undo.shift(); S.redo = []; }
+// 기록 한 칸은 CSS 변경 { styles, log } 이거나 내보내기 설정 변경 { exportSpec } 이다. 둘은 한 줄로 이어진다.
+function pushUndo(entry) { S.undo.push(entry); if (S.undo.length > 200) S.undo.shift(); S.redo = []; }
+function record(pre = S.styles) { pushUndo({ styles: pre.slice(), log: S.log.slice() }); }
+function recordExport(pre) { pushUndo({ exportSpec: pre }); updateState(); }
 function afterChange({ panel = true } = {}) {
   applyStyles(); updateState(); scheduleDraft();
   if (panel) { renderPanel(); renderBlocks(); }
 }
+/** 기록 한 칸을 적용하고, 그 반대 방향 칸을 돌려준다. */
+function applyEntry(entry) {
+  if (entry.exportSpec) {
+    const cur = exp.snapshot();
+    exp.setSpec(entry.exportSpec);
+    if (currentTab !== "export") showTab("export");   // 무엇이 되돌아갔는지 보이게
+    updateState();
+    return { exportSpec: cur };
+  }
+  const cur = { styles: S.styles.slice(), log: S.log.slice() };
+  S.styles = entry.styles; S.log = entry.log; afterChange();
+  return cur;
+}
 function undo() {
   if (S.editing) commitEditing();
   const prev = S.undo.pop(); if (!prev) return;
-  S.redo.push({ styles: S.styles.slice(), log: S.log.slice() });
-  S.styles = prev.styles; S.log = prev.log; afterChange();
+  S.redo.push(applyEntry(prev));
 }
 function redo() {
+  if (S.editing) commitEditing();
   const next = S.redo.pop(); if (!next) return;
-  S.undo.push({ styles: S.styles.slice(), log: S.log.slice() });
-  S.styles = next.styles; S.log = next.log; afterChange();
+  S.undo.push(applyEntry(next));
 }
 
 // ---------- 미리보기 ----------
@@ -630,7 +645,7 @@ $("tab-css").onclick = () => showTab("css");
 $("tab-export").onclick = () => showTab("export");
 
 const exp = ID ? initExport({
-  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(),
+  pane: $("pane-export"), overlay: $("xp-overlay"), api, currentHtml, isDirty: () => isDirty(), record: recordExport,
   selected: () => (S.selected && S.selected.isConnected ? S.selected : null),
   pathOf, label, resolve: (p) => (doc ? resolvePath(p) : null),
   frameDoc: () => doc, frameWin: () => win,
@@ -639,12 +654,24 @@ $("pick").onclick = () => { S.pick = !S.pick; $("pick").setAttribute("aria-press
 $("all").onclick = () => { S.all = !S.all; $("all").setAttribute("aria-pressed", String(S.all)); needDraw = true; };
 $("undo").onclick = undo; $("redo").onclick = redo; $("save").onclick = () => save();
 
+// 글자 칸에 포커스가 들어온 때의 값. 그 뒤로 고친 게 없으면 Ctrl+Z는 칸이 아니라 편집기 기록을 되돌린다.
+const TEXT_INPUT = /^(text|search|number|url|email|tel)$/;
+const isTextField = (t) => t?.tagName === "TEXTAREA" || (t?.tagName === "INPUT" && TEXT_INPUT.test(t.type));
+document.addEventListener("focusin", (e) => { if (isTextField(e.target)) e.target._focusValue = e.target.value; }, true);
+
 function onKey(e) {
   const mod = e.ctrlKey || e.metaKey;
-  const typing = /^(INPUT|TEXTAREA)$/.test((e.target.ownerDocument === document ? document.activeElement : e.target)?.tagName || "");
+  const active = e.target.ownerDocument === document ? document.activeElement : e.target;
+  const typing = isTextField(active);
+  // 칸 안에서 고치던 글자가 있으면 그 칸의 되돌리기를 쓰고, 없으면 편집기 기록으로 넘긴다
+  const fieldHasEdits = typing && active.value !== active._focusValue;
+  const historyKey = mod && !e.altKey && (e.key.toLowerCase() === "z" || e.key.toLowerCase() === "y");
   if (mod && e.key.toLowerCase() === "s") { e.preventDefault(); save(); }
-  else if (mod && !typing && e.key.toLowerCase() === "z") { e.preventDefault(); e.shiftKey ? redo() : undo(); }
-  else if (mod && !typing && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
+  else if (historyKey && !fieldHasEdits) {
+    e.preventDefault();
+    if (typing) active.blur();
+    e.key.toLowerCase() === "y" || e.shiftKey ? redo() : undo();
+  }
   else if (e.key === "Escape" && !typing && S.selected) { S.selected = null; S.selPath = null; needDraw = true; renderTree(); renderPanel(); }
 }
 document.addEventListener("keydown", onKey);
