@@ -291,7 +291,12 @@ export function renderGallery(entries, { libPath, generatedAt, categories, cli =
   .suggest { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin: 4px 4px 0; padding: 5px 10px; font: inherit; font-size: 12.5px; font-weight: 600; border-style: dashed; }
   .suggest .ic { color: var(--accent); }
   .item { position: relative; }
-  .item .sel { position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px;
+  .quick-edit { position: absolute; top: 8px; left: 8px; z-index: 2; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 12px 4px 10px;
+                border-radius: 6px; font-size: 13px; font-weight: 700; text-decoration: none; box-shadow: 0 2px 8px rgba(0,0,0,.25);
+                opacity: 0; transform: translateY(-2px); transition: opacity .12s ease-out, transform .12s ease-out; }
+  .item:hover .quick-edit, .item:focus-within .quick-edit, .quick-edit:focus-visible { opacity: 1; transform: none; }
+  @media (hover: none) { .quick-edit { opacity: 1; transform: none; } }
+  .item .sel { position: absolute; top: 8px; right: 8px; z-index: 2; display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px;
                background: color-mix(in srgb, var(--panel) 88%, transparent); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .12s ease-out; }
   .item:hover .sel, .item .sel:focus-visible, .item.is-selected .sel, body.has-selection .item .sel { opacity: 1; }
   .item .sel[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
@@ -613,18 +618,21 @@ initTooltips();
             onclick: (e) => openMoveMenu(e.currentTarget, selected.has(d.id) ? [...selected] : [d.id]) }, ic("folder-move")),
           ...copyButtons,
           el("a", { class: "ui-control ibtn", href, target: "_blank", rel: "noopener", "aria-label": "원본 열기", "data-tip": "원본 열기\\n저장된 component.html을 새 탭에서 엽니다." }, ic("external")),
-          el("a", { class: "ui-control", href: editHref(d.id) + "#export", "data-tip": "내보내기\\n편집기의 내보내기 탭을 엽니다." }, ic("download"), "내보내기"),
-          el("a", { class: "primary ui-primary ui-control", href: editHref(d.id), "data-tip": "편집\\n편집기에서 엽니다." }, ic("edit"), "편집"))
+          el("a", { class: "ui-control", href: editHref(d.id) + "#export", "data-tip": "내보내기\\n편집기의 내보내기 탭을 엽니다." }, ic("download"), "내보내기"))
       : el("div", { class: "actions" },
           el("span", { class: "spacer" }),
           ...copyButtons,
-          el("button", { type: "button", class: "ui-control ibtn", "aria-label": "편집 명령 복사", "data-tip": "편집 명령 복사\\n편집기를 여는 명령을 복사합니다. 터미널에 붙여 넣으면 편집 화면이 열립니다.", onclick: () => copy(EDIT_CMD(d.id), "편집 명령을 복사했습니다.") }, ic("terminal")),
-          el("a", { class: "primary ui-primary ui-control", href, target: "_blank", rel: "noopener", "data-tip": "열기\\n새 탭에서 엽니다." }, ic("external"), "열기"));
+          el("button", { type: "button", class: "ui-control ibtn", "aria-label": "편집 명령 복사", "data-tip": "편집 명령 복사\\n편집기를 여는 명령을 복사합니다. 터미널에 붙여 넣으면 편집 화면이 열립니다.", onclick: () => copy(EDIT_CMD(d.id), "편집 명령을 복사했습니다.") }, ic("terminal")));
+    // 썸네일 왼쪽 위: 편집(파일로 연 목록에서는 열기). 카드에 마우스를 올리거나 포커스하면 나온다
+    const quick = SERVER
+      ? el("a", { class: "quick-edit ui-primary", href: editHref(d.id), "data-tip": "편집\\n편집기에서 엽니다." }, ic("edit"), "편집")
+      : el("a", { class: "quick-edit ui-primary", href, target: "_blank", rel: "noopener", "data-tip": "열기\\n새 탭에서 엽니다." }, ic("external"), "열기");
     const mainHref = SERVER ? editHref(d.id) : href;
     const linkAttrs = SERVER ? { href: mainHref } : { href: mainHref, target: "_blank", rel: "noopener" };
     const art = el("article", { class: "item ui-surface" + (selected.has(d.id) ? " is-selected" : "") + (picked.includes(d.id) ? " in-sheet" : ""), "data-id": d.id },
       SERVER ? el("button", { type: "button", class: "sel", "aria-pressed": String(selected.has(d.id)), "aria-label": d.name + " 선택", "data-tip": "선택\\n여러 개를 골라 옮기기·내보내기·묶음 시트에 씁니다. Ctrl+A로 이 폴더 전체.",
         onclick: () => { selected.has(d.id) ? selected.delete(d.id) : selected.add(d.id); syncSel(); } }, ic("select")) : null,
+      quick,
       el("a", { class: "frame-link", ...linkAttrs, tabindex: "-1", "aria-hidden": "true" }, frame),
       el("div", { class: "body" },
         el("h3", { class: "name" }, el("a", { ...linkAttrs, text: d.name })),
