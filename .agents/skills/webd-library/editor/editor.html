@@ -18,7 +18,7 @@
   </div>
   <div class="tools" role="toolbar" aria-label="편집 도구">
     <label class="field" hidden data-icon="viewport" data-tip="미리보기 폭&#10;미리보기 화면의 너비를 바꿉니다. 저장되는 컴포넌트에는 영향이 없습니다."><span class="sr">미리보기 폭</span><select id="vp" class="ui-chrome-control"></select></label>
-    <button type="button" id="pick" class="toggle ui-chrome-control" aria-pressed="false" data-icon="pick" data-tip="요소 선택 (V)&#10;켜면 미리보기에서 클릭해 편집할 요소를 고릅니다. 끄면 컴포넌트를 직접 조작합니다.">요소 선택</button>
+    <button type="button" id="pick" class="toggle ui-chrome-control" aria-pressed="true" data-icon="pick" data-tip="요소 선택 (V)&#10;켜면 미리보기에서 클릭해 편집할 요소를 고릅니다. 끄면 컴포넌트를 직접 조작합니다.">요소 선택</button>
     <button type="button" id="all" class="toggle ui-chrome-control" hidden aria-pressed="false" data-icon="spacing" data-tip="전체 간격 보기&#10;모든 요소의 margin·padding 영역을 한꺼번에 보여 줍니다.">전체 간격</button>
     <span class="sep" aria-hidden="true"></span>
     <button type="button" id="undo" class="ui-chrome-control icon-only" aria-label="되돌리기" data-icon="undo" data-tip="되돌리기&#10;Ctrl+Z"></button>
@@ -42,14 +42,15 @@
   </aside>
   <section class="stage-wrap" aria-label="미리보기">
     <div class="legend" aria-hidden="true">
-      <span class="stage-caption"><span id="preview-bg">원래 배경</span> · <output id="preview-size"></output></span>
+      <span class="stage-caption"><span id="preview-bg">원래 배경</span> · <output id="preview-size"></output>
+        <button type="button" id="zoom" class="zoom-chip" data-tip="확대 비율&#10;누르면 화면에 맞춥니다(Shift+1).&#10;Ctrl+휠·Ctrl+=/−로 확대·축소, Ctrl+0은 100%.&#10;오른쪽 끌기·휠·Space+끌기로 이동합니다.">100%</button></span>
       <span class="lg-box"><i class="lg-m"></i>margin</span><span class="lg-box"><i class="lg-b"></i>border</span><span class="lg-box"><i class="lg-p"></i>padding</span><span class="lg-box"><i class="lg-c"></i>content</span>
       <span class="lg-xp" data-tip="범위&#10;점선 상자가 내보낼 범위입니다."><i class="lg-target"></i>범위</span><span class="lg-xp" data-tip="인셋&#10;9·3-slice 안내선입니다. 끌어서 조절합니다."><i class="lg-guide"></i>인셋</span>
     </div>
     <div class="timeline" id="timeline" aria-label="타임라인"></div>
     <div class="stage" id="stage">
       <div class="canvas" id="canvas">
-        <iframe id="frame" title="컴포넌트 미리보기"></iframe>
+        <iframe id="frame" title="컴포넌트 미리보기" scrolling="no"></iframe>
         <div class="overlay" id="overlay" aria-hidden="true"></div>
         <div class="xp-overlay" id="xp-overlay" hidden></div>
       </div>

@@ -362,7 +362,9 @@ export function initExport(ctx) {
     document.body.classList.add("xp-dragging", side === "l" || side === "r" ? "xp-drag-x" : "xp-drag-y");
     drag = { side };
     const move = (ev) => {
-      const x = ev.clientX - ob.left, y = ev.clientY - ob.top;
+      // 캔버스가 확대·축소돼 있으므로 화면 좌표를 미리보기 좌표로 되돌린다
+      const sc = overlay.offsetWidth ? ob.width / overlay.offsetWidth : 1;
+      const x = (ev.clientX - ob.left) / sc, y = (ev.clientY - ob.top) / sc;
       const v = side === "l" ? x - r.left : side === "r" ? r.left + r.width - x : side === "t" ? y - r.top : r.top + r.height - y;
       const max = side === "l" || side === "r" ? r.width : r.height;
       spec.slice.insets[side] = Math.max(0, Math.min(Math.round(max), Math.round(v)));

@@ -87,8 +87,18 @@ h1 { font-size: 18px; }
 .legend span { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); }
 .legend i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
 .lg-m { background: var(--bm-margin); } .lg-b { background: var(--bm-border); } .lg-p { background: var(--bm-padding); } .lg-c { background: var(--bm-content); }
-.stage { display: flex; overflow: auto; background: var(--stage); min-height: 0; padding: 24px; }
-.canvas { position: relative; flex: none; margin: auto; box-shadow: 0 0 0 1px var(--line); }
+/* 무대 = 캔버스: 스크롤바 없이 이동·확대(editor-app.mjs의 applyView). 점 격자는 이동·배율을 따라간다 */
+.stage { position: relative; overflow: hidden; min-height: 0; padding: 0; touch-action: none; user-select: none;
+         background-color: var(--stage);
+         background-image: radial-gradient(circle, color-mix(in srgb, var(--muted) 38%, transparent) 1px, transparent 1.4px);
+         background-size: 24px 24px; }
+.canvas { position: absolute; left: 0; top: 0; margin: 0; transform-origin: 0 0; box-shadow: 0 0 0 1px var(--line), 0 8px 28px rgba(0,0,0,.18); will-change: transform; }
+body.panning, body.panning * { cursor: grabbing !important; }
+body.space-pan .stage, body.space-pan .stage * { cursor: grab; }
+body.panning .canvas iframe, body.space-pan .canvas iframe { pointer-events: none; }
+.zoom-chip { margin-left: 8px; padding: 1px 7px; min-height: 20px; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); color: var(--text);
+             font: 600 11px/1.4 var(--mono); cursor: pointer; vertical-align: 1px; }
+.zoom-chip:hover { border-color: var(--muted); }
 .canvas:not(.ui-checkerboard) { background: var(--panel); }
 .canvas iframe { display: block; border: 0; width: 100%; height: 100%; }
 .canvas.ui-checkerboard iframe { color-scheme: light; }
@@ -329,7 +339,7 @@ body.xp-drag-y, body.xp-drag-y * { cursor: ns-resize !important; }
 @media (max-width: 480px) {
   .top { padding: 10px 16px; }
   .legend, .banner { padding-left: 16px; padding-right: 16px; }
-  .stage { padding: 8px; }
+
   .pane { padding: 12px 16px 32px; }
   .state { min-width: 0; text-align: left; }
 }

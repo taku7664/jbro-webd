@@ -26,7 +26,10 @@ const STATE_PSEUDO = /:(hover|focus|focus-visible|focus-within|active|visited|ta
 
 const S = {
   meta: null, source: "", hash: "", saved: [], styles: [], undo: [], redo: [], log: [],
-  selected: null, selPath: null, hovered: null, pick: false, all: false, editable: true, editing: null, conflict: false,
+  // pick: 켜져 있으면 미리보기에서 왼쪽 클릭 = 요소 선택(기본). 끄면 컴포넌트를 직접 조작한다.
+  selected: null, selPath: null, hovered: null, pick: true, all: false, editable: true, editing: null, conflict: false,
+  // 캔버스 보기: x·y = 캔버스 왼쪽 위의 무대 안 위치(px), z = 배율
+  view: { x: 0, y: 0, z: 1 }, viewSet: false,
   // 구조 편집: 원문을 따로 읽은 문서(model)를 고치고 미리보기에 옮긴다. 저장할 때만 <body> 안쪽을 바꿔 넣는다.
   model: null, savedBody: "", struct: { ok: false, reason: "아직 불러오는 중입니다." },
   // 상태(타임라인): CSS에서 찾은 상태 목록과 지금 미리보기에 건 상태. 미리보기에만 걸고 저장 파일에는 남지 않는다.
@@ -227,17 +230,126 @@ function setupViewports(vp) {
   const sel = $("vp");
   const saved = vp?.width || 1200;
   const height = vp?.height || 720;
-  const opts = [[String(saved), `${saved}×${height}px (저장 크기)`], ...[1440, 1200, 768, 375].filter((w) => w !== saved).map((w) => [String(w), `${w}px`]), ["fit", "패널 폭에 맞춤"]];
+  const opts = [[String(saved), `${saved}×${height}px (저장 크기)`], ...[1440, 1200, 768, 375].filter((w) => w !== saved).map((w) => [String(w), `${w}px`])];
   for (const [v, t] of opts) sel.append(new Option(t, v));
-  sel.value = matchMedia("(max-width: 1400px)").matches ? "fit" : String(saved);
+  sel.value = String(saved);
   const apply = () => {
-    $("canvas").style.width = sel.value === "fit" ? "100%" : sel.value + "px";
+    $("canvas").style.width = sel.value + "px";
     $("canvas").style.height = height + "px";
-    $("preview-size").textContent = `${sel.value === "fit" ? "패널 폭" : sel.value + "px"} × ${height}px`;
+    $("preview-size").textContent = `${sel.value} × ${height}px`;
     needDraw = true;
+    if (S.viewSet) fitView(true); else { S.viewSet = true; requestAnimationFrame(() => fitView(true)); }
   };
   sel.addEventListener("change", apply); apply();
 }
+
+// ---------- 캔버스(무대): 스크롤바 없이 이동·확대 ----------
+// 왼쪽 클릭 = 요소 선택 · 오른쪽(또는 가운데) 끌기 = 이동 · 그냥 오른쪽 클릭 = 메뉴 · 휠 = 이동 · Ctrl+휠 = 확대·축소
+// Space를 누른 채 왼쪽 끌기도 이동. 미리보기 안(iframe)에서 일어난 입력도 같은 함수로 받는다.
+const ZMIN = 0.1, ZMAX = 16;
+const canvasSize = () => ({ w: $("canvas").offsetWidth, h: $("canvas").offsetHeight });
+function applyView() {
+  const { x, y, z } = S.view;
+  $("canvas").style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) scale(${z})`;
+  const st = $("stage"), g = 24 * z;
+  st.style.backgroundSize = `${g}px ${g}px`;
+  st.style.backgroundPosition = `${Math.round(x)}px ${Math.round(y)}px`;
+  const zb = $("zoom"); if (zb) zb.textContent = `${Math.round(z * 100)}%`;
+}
+/** 화면에 맞춤. cap이면 100%보다 크게 키우지 않는다(처음 열 때) */
+function fitView(cap = false) {
+  const st = $("stage"), { w, h } = canvasSize();
+  if (!st.clientWidth || !w) return;
+  let z = Math.min((st.clientWidth - 48) / w, (st.clientHeight - 48) / h);
+  z = Math.max(ZMIN, Math.min(cap ? 1 : ZMAX, z));
+  S.view = { z, x: (st.clientWidth - w * z) / 2, y: (st.clientHeight - h * z) / 2 };
+  applyView();
+}
+function zoomTo(z, ax, ay) {
+  const st = $("stage");
+  if (ax == null) { ax = st.clientWidth / 2; ay = st.clientHeight / 2; }
+  z = Math.max(ZMIN, Math.min(ZMAX, z));
+  const k = z / S.view.z;
+  S.view = { z, x: ax - (ax - S.view.x) * k, y: ay - (ay - S.view.y) * k };
+  applyView();
+}
+const ZOOM_STEPS = [0.1, 0.25, 0.33, 0.5, 0.67, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16];
+function zoomStep(dir) {
+  const z = S.view.z;
+  const next = dir > 0 ? ZOOM_STEPS.find((s) => s > z + 1e-3) ?? ZMAX : [...ZOOM_STEPS].reverse().find((s) => s < z - 1e-3) ?? ZMIN;
+  zoomTo(next);
+}
+/** 입력 좌표를 무대(stage) 기준으로. 미리보기 안에서 온 입력이면 캔버스 배율을 적용한다 */
+function stagePoint(e, fromDoc) {
+  const sr = $("stage").getBoundingClientRect();
+  if (!fromDoc) return { x: e.clientX - sr.left, y: e.clientY - sr.top };
+  const fr = $("frame").getBoundingClientRect();
+  return { x: fr.left - sr.left + e.clientX * S.view.z, y: fr.top - sr.top + e.clientY * S.view.z };
+}
+function onWheel(e, fromDoc) {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) { const p = stagePoint(e, fromDoc); zoomTo(S.view.z * Math.exp(-e.deltaY * (e.deltaMode ? 0.05 : 0.0015)), p.x, p.y); return; }
+  const k = e.deltaMode ? 16 : 1;
+  const dx = (e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX) * k, dy = (e.shiftKey && !e.deltaX ? 0 : e.deltaY) * k;
+  S.view.x -= dx; S.view.y -= dy; applyView();
+}
+let pan = null, spaceDown = false, suppressMenu = false, pickSheet = null;
+/**
+ * 요소 선택 중에는 미리보기 안 모든 요소가 클릭을 받게 한다. 장식 층에 pointer-events: none이 걸려 있으면
+ * 클릭이 그 요소를 지나 body가 골라지기 때문이다. 문서에 <style>을 넣지 않고 adoptedStyleSheets로 걸어
+ * CSS 편집(style 요소 목록)과 저장 파일에는 영향이 없다.
+ */
+function applyPickCss() {
+  if (!doc || !win) return;
+  try {
+    if (!pickSheet || pickSheet._win !== win) { pickSheet = new win.CSSStyleSheet(); pickSheet.replaceSync("*, *::before, *::after { pointer-events: auto !important; }"); pickSheet._win = win; }
+    const rest = [...doc.adoptedStyleSheets].filter((s) => s !== pickSheet);
+    doc.adoptedStyleSheets = S.pick ? [...rest, pickSheet] : rest;
+  } catch {}
+}
+addEventListener("keydown", (e) => { if (e.code === "Space" && !isTextField(document.activeElement) && document.activeElement?.tagName !== "BUTTON") { spaceDown = true; document.body.classList.add("space-pan"); } });
+addEventListener("keyup", (e) => { if (e.code === "Space") { spaceDown = false; document.body.classList.remove("space-pan"); } });
+/** 끌기 시작. 오른쪽은 움직여야 이동이 되고, 안 움직이고 떼면 메뉴(contextmenu)로 넘긴다 */
+function panStart(e) {
+  const isPan = e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown);
+  if (!isPan) return false;
+  pan = { sx: e.screenX, sy: e.screenY, x: S.view.x, y: S.view.y, moved: false, button: e.button };
+  if (e.button !== 2) e.preventDefault();
+  return true;
+}
+function panMove(e) {
+  if (!pan) return;
+  const dx = e.screenX - pan.sx, dy = e.screenY - pan.sy;
+  if (!pan.moved && Math.hypot(dx, dy) < 4) return;
+  if (!pan.moved) { pan.moved = true; document.body.classList.add("panning"); }
+  S.view.x = pan.x + dx; S.view.y = pan.y + dy; applyView();
+}
+function panEnd(e) {
+  if (!pan) return;
+  if (pan.moved && pan.button === 2) suppressMenu = true;   // 끌어서 이동했으면 뒤따르는 메뉴는 띄우지 않는다
+  pan = null; document.body.classList.remove("panning");
+}
+/** 오른쪽 클릭(끌지 않음): 그 자리 요소를 고르고 메뉴. target이 없으면 최상위(body) 메뉴 */
+function canvasMenu(e, target, fromDoc) {
+  e.preventDefault();
+  if (suppressMenu) { suppressMenu = false; return; }
+  const sr = $("stage").getBoundingClientRect(), p = stagePoint(e, fromDoc);
+  const hit = target && target.nodeType === 1 && target !== doc?.documentElement && target !== doc?.body ? target : null;
+  if (hit) select(hit);
+  openMenu(sr.left + p.x, sr.top + p.y, hit ? S.selected : doc?.body);
+}
+(function setupStage() {
+  const st = $("stage");
+  st.addEventListener("wheel", (e) => onWheel(e, false), { passive: false });
+  st.addEventListener("pointerdown", (e) => { if (panStart(e)) st.setPointerCapture(e.pointerId); });
+  st.addEventListener("pointermove", panMove);
+  st.addEventListener("pointerup", panEnd);
+  st.addEventListener("pointercancel", panEnd);
+  // 캔버스 밖 빈 곳: 왼쪽 클릭 = 선택 해제, 오른쪽 클릭 = 최상위(body) 메뉴
+  st.addEventListener("click", (e) => { if (e.target === st && S.selected && !spaceDown) { S.selected = null; S.selPath = null; needDraw = true; renderTree(); renderPanel(); renderTimeline(); } });
+  st.addEventListener("contextmenu", (e) => canvasMenu(e, null, false));
+  addEventListener("resize", () => { if (S.viewSet) applyView(); });
+})();
 
 $("frame").addEventListener("load", () => {
   win = $("frame").contentWindow; doc = $("frame").contentDocument;
@@ -249,10 +361,18 @@ $("frame").addEventListener("load", () => {
   S.struct = checkStruct();
   if (S.struct.ok && bodyChanged()) syncLive(S.selPath);   // 초안에서 이어 편집한 구조를 화면에 옮긴다
   applyStyles();
-  doc.addEventListener("contextmenu", (e) => { if (!S.pick) return; e.preventDefault(); select(e.target); openMenu(e.clientX + $("frame").getBoundingClientRect().left, e.clientY + $("frame").getBoundingClientRect().top, S.selected); }, true);
-  doc.addEventListener("mousemove", (e) => { if (!S.pick) return; const t = e.target; S.hovered = t && t.nodeType === 1 && t !== doc.documentElement ? t : null; needDraw = true; }, true);
+  // 캔버스 입력: 미리보기 안에서도 오른쪽 끌기 = 이동, 오른쪽 클릭 = 메뉴, 휠 = 이동·확대
+  doc.addEventListener("wheel", (e) => onWheel(e, true), { passive: false, capture: true });
+  doc.addEventListener("pointerdown", (e) => { if (panStart(e)) { try { doc.documentElement.setPointerCapture(e.pointerId); } catch {} if (e.button !== 2) e.stopPropagation(); } }, true);
+  doc.addEventListener("pointermove", panMove, true);
+  doc.addEventListener("pointerup", panEnd, true);
+  doc.addEventListener("pointercancel", panEnd, true);
+  doc.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); }, true);
+  doc.addEventListener("contextmenu", (e) => canvasMenu(e, e.target, true), true);
+  doc.addEventListener("mousemove", (e) => { if (!S.pick || pan) return; const t = e.target; S.hovered = t && t.nodeType === 1 && t !== doc.documentElement ? t : null; needDraw = true; }, true);
   doc.addEventListener("mouseleave", () => { S.hovered = null; needDraw = true; });
-  doc.addEventListener("click", (e) => { if (!S.pick) return; e.preventDefault(); e.stopPropagation(); select(e.target); }, true);
+  doc.addEventListener("click", (e) => { if (!S.pick || spaceDown) return; e.preventDefault(); e.stopPropagation(); select(e.target); }, true);
+  applyPickCss();
   doc.addEventListener("submit", (e) => { if (S.pick) e.preventDefault(); }, true);
   doc.addEventListener("keydown", onKey);
   win.addEventListener("scroll", () => { needDraw = true; }, { passive: true });
@@ -1147,7 +1267,7 @@ const exp = ID ? initExport({
   pathOf, label, resolve: (p) => (doc ? resolvePath(p) : null),
   frameDoc: () => doc, frameWin: () => win,
 }) : null;
-$("pick").onclick = () => { S.pick = !S.pick; $("pick").setAttribute("aria-pressed", String(S.pick)); S.hovered = null; needDraw = true; };
+$("pick").onclick = () => { S.pick = !S.pick; $("pick").setAttribute("aria-pressed", String(S.pick)); S.hovered = null; needDraw = true; applyPickCss(); };
 $("all").onclick = () => { S.all = !S.all; $("all").setAttribute("aria-pressed", String(S.all)); needDraw = true; };
 $("undo").onclick = undo; $("redo").onclick = redo; $("save").onclick = () => save();
 
@@ -1260,7 +1380,9 @@ function showHelp() {
   if (!dlg) {
     const rows = [["Ctrl+S", "저장"], ["Ctrl+Z · Ctrl+Shift+Z", "되돌리기 · 다시 실행"], ["Ctrl+E", "지금 설정으로 내보내기"], ["V", "요소 선택 켜기·끄기"],
       ["Ctrl+C · Ctrl+X · Ctrl+V", "요소 복사 · 잘라내기 · 붙여넣기(Shift: 자식으로)"], ["Ctrl+D · Delete · F2", "복제 · 삭제 · 이름 바꾸기"], ["Ctrl+Shift+G", "빈 부모 만들기"],
-      ["Esc", "선택 해제"], ["F10 · Alt", "메뉴 바로 이동"]];
+      ["Esc", "선택 해제"], ["F10 · Alt", "메뉴 바로 이동"],
+      ["왼쪽 클릭", "요소 선택"], ["오른쪽 끌기 · 휠 · Space+끌기", "캔버스 이동"], ["오른쪽 클릭", "요소 메뉴"],
+      ["Ctrl+휠 · Ctrl+= · Ctrl+−", "확대·축소"], ["Ctrl+0 · Shift+1", "100% · 화면에 맞춤"]];
     dlg = el("dialog", { id: "help", class: "help", "aria-labelledby": "help-title" },
       el("h2", { id: "help-title" }, uiIcon("info"), "단축키"),
       el("dl", {}, ...rows.flatMap(([k, t]) => [el("dt", {}, el("kbd", { text: k })), el("dd", { text: t })])),
@@ -1302,7 +1424,13 @@ const EDITOR_MENUS = [
     ];
   } },
   { label: "보기", items: () => [
-    { label: "요소 선택", icon: "pick", key: "V", checked: S.pick, run: () => $("pick").click() },
+    { label: "요소 선택", icon: "pick", key: "V", checked: S.pick, tip: "요소 선택\n켜면 미리보기에서 왼쪽 클릭으로 요소를 고릅니다. 끄면 컴포넌트를 직접 조작합니다.", run: () => $("pick").click() },
+    null,
+    { label: "확대", icon: "zoom", key: "Ctrl+=", run: () => zoomStep(1) },
+    { label: "축소", key: "Ctrl+−", run: () => zoomStep(-1) },
+    { label: "100%", key: "Ctrl+0", checked: Math.abs(S.view.z - 1) < 1e-3, run: () => zoomTo(1) },
+    { label: "화면에 맞춤", icon: "size-compact", key: "Shift+1", run: () => fitView(false) },
+    null,
     { label: "전체 간격 보기", icon: "spacing", checked: S.all, run: () => $("all").click() },
     { label: "미리보기 폭", icon: "viewport", sub: () => [...$("vp").options].map((o) => ({ label: o.textContent, checked: $("vp").value === o.value, run: () => { $("vp").value = o.value; $("vp").dispatchEvent(new Event("change")); } })) },
     null,
@@ -1339,7 +1467,12 @@ document.addEventListener("keydown", (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") { e.preventDefault(); if (exp?.ready()) { showTab("export"); exp.exportNow(); } }
   else if (!mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "v") { e.preventDefault(); $("pick").click(); }
+  else if (mod && !e.altKey && (e.key === "=" || e.key === "+")) { e.preventDefault(); zoomStep(1); }
+  else if (mod && !e.altKey && (e.key === "-" || e.key === "_")) { e.preventDefault(); zoomStep(-1); }
+  else if (mod && !e.altKey && e.key === "0") { e.preventDefault(); zoomTo(1); }
+  else if (!mod && e.shiftKey && (e.code === "Digit1")) { e.preventDefault(); fitView(false); }
 });
+$("zoom")?.addEventListener("click", () => fitView(false));
 initTooltips();
 for (const n of document.querySelectorAll("[data-icon]")) n.prepend(uiIcon(n.dataset.icon));
 addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
