@@ -86,7 +86,7 @@ export function initExport(ctx) {
         ...(spec.slice.mode === "none" ? [] : sliceRows()),
       ]),
       section("대상", [
-        row("찍을 것", seg("target", [["root", "조각 전체"], ["element", "고른 요소"]], spec.target.kind, (v) => {
+        row("찍을 것", seg("target", [["root", "컴포넌트 전체"], ["element", "고른 요소"]], spec.target.kind, (v) => {
           if (v === "element") {
             const sel = ctx.selected();
             if (!sel) { setStatus("계층에서 요소를 먼저 고르세요."); render(); return; }
@@ -95,9 +95,9 @@ export function initExport(ctx) {
           changed();
         }), targetNote(), "고른 요소면 계층에서 다른 요소를 고르는 대로 대상이 따라 바뀝니다.\n9·3-slice는 틀을 그리는 요소를 고르는 것이 정확합니다."),
         row("배경", seg("background", [["transparent", "투명"], ["keep", "원래 배경"]], spec.background, (v) => { spec.background = v; changed(); }),
-          null, "투명: 배경 없이 찍음(알파)\n원래 배경: 조각의 배경색까지"),
+          null, "투명: 배경 없이 찍음(알파)\n원래 배경: 컴포넌트의 배경색까지"),
         row("범위", seg("bounds", [["ink", "그려진 픽셀"], ["box", "상자 그대로"]], spec.bounds, (v) => { spec.bounds = v; changed(); }),
-          null, "그려진 픽셀: 그림자·광채까지 넣고 빈 여백을 잘라 냄\n상자 그대로: 요소 상자(조각 전체면 저장 크기)대로"),
+          null, "그려진 픽셀: 그림자·광채까지 넣고 빈 여백을 잘라 냄\n상자 그대로: 요소 상자(컴포넌트 전체면 저장 크기)대로"),
         stateRow(),
       ]),
       section("출력", [
@@ -112,7 +112,7 @@ export function initExport(ctx) {
         row("폴더", el("div", { class: "xp-dir" },
           input("dir", spec.output.dir, (v) => { spec.output.dir = v; changed({ preview: false }); }, { placeholder: "기본 폴더", spellcheck: "false", title: spec.output.dir || defaultDir }),
           spec.output.dir ? el("button", { type: "button", class: "xp-link", text: "기본으로", title: defaultDir, onclick: () => { spec.output.dir = ""; changed({ preview: false }); render(); } }) : null),
-          null, `비워 두면 기본 폴더:\n${defaultDir}\n이 조각만 다른 곳에 쓰려면 전체 경로를 적으세요.`),
+          null, `비워 두면 기본 폴더:\n${defaultDir}\n이 컴포넌트만 다른 곳에 쓰려면 전체 경로를 적으세요.`),
       ]),
       el("section", { class: "xp-result-wrap" }, el("h3", { class: "sect", text: "결과" }), el("div", { class: "xp-result" })),
       el("div", { class: "xp-status", role: "status", "aria-live": "polite" }),
@@ -300,7 +300,7 @@ export function initExport(ctx) {
         if (r) {
           overlay.append(box("xg-target", r.left, r.top, r.width, r.height));
           const tag = box("xg-tag", r.left, Math.max(0, r.top - 20), 0, 0);
-          tag.textContent = `${spec.target.kind === "root" ? "조각 전체" : spec.target.label} · ${SLICE_LABEL[m]}`;
+          tag.textContent = `${spec.target.kind === "root" ? "컴포넌트 전체" : spec.target.label} · ${SLICE_LABEL[m]}`;
           overlay.append(tag);
           if (m !== "none") {
             const lines = [];
@@ -405,7 +405,7 @@ export function initExport(ctx) {
       if (spec?.target.kind === "element" && !ctx.resolve(spec.target.path)) {
         const lost = spec.target.label;
         spec.target = { kind: "root" }; committed = clone(spec); render();
-        setStatus(`저장된 대상(${lost})을 찾지 못해 조각 전체로 바꿨습니다.`);
+        setStatus(`저장된 대상(${lost})을 찾지 못해 컴포넌트 전체로 바꿨습니다.`);
       } else if (spec && active) render();
     },
     animation() { return spec?.animation || null; },

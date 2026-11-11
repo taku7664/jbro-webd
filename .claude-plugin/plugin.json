@@ -1,9 +1,10 @@
 {
   "name": "jbro-webd",
   "version": "0.1.0",
-  "description": "AI 티 나지 않는 웹 UI를 설계·구현·검증하는 WebD 스킬과 컴포넌트 라이브러리를 담은 Claude Code 플러그인 (초안)",
+  "description": "AI 티 나지 않는 웹 UI를 설계·구현·검증하는 WebD 스킬과 컴포넌트 라이브러리를 담은 Claude Code 플러그인",
   "author": {
     "name": "PPAK_JU"
   },
-  "repository": "https://github.com/taku7664/jbro-webd"
+  "repository": "https://github.com/taku7664/jbro-webd",
+  "license": "MIT"
 }

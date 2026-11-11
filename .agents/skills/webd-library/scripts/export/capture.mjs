@@ -202,7 +202,7 @@ export function createCapturer({ browserPath, tabs = Number(process.env.WEBD_CAP
     else await cdp.send("Emulation.setDefaultBackgroundColorOverride", {});
     const loaded = cdp.once("Page.loadEventFired", 20000);
     const nav = await cdp.send("Page.navigate", { url });
-    if (nav.errorText) throw new CaptureError(`조각을 열지 못했습니다: ${nav.errorText}`);
+    if (nav.errorText) throw new CaptureError(`컴포넌트를 열지 못했습니다: ${nav.errorText}`);
     await loaded;
 
     const slice = spec.slice.mode !== "none";
@@ -216,7 +216,7 @@ export function createCapturer({ browserPath, tabs = Number(process.env.WEBD_CAP
     }
     const pre = [];
     if (slice && spec.slice.size === "compact" && spec.slice.fill === "tile") pre.push("가운데를 반복(tile)할 때는 반복 무늬를 지키려고 원래 크기로 찍었습니다.");
-    if (slice && spec.target.kind === "root") pre.push("조각 전체(body)를 9·3-slice로 찍었습니다. 틀이 되는 요소를 계층에서 골라 대상으로 지정하면 더 정확합니다.");
+    if (slice && spec.target.kind === "root") pre.push("컴포넌트 전체(body)를 9·3-slice로 찍었습니다. 틀이 되는 요소를 계층에서 골라 대상으로 지정하면 더 정확합니다.");
     const prep = await cdp.evaluate(preparePage, {
       target: spec.target, transparent: spec.background === "transparent", frameOnly: slice && spec.slice.frameOnly,
       resize, rootBox: spec.target.kind === "root" && !resize ? { w: vw, h: vh } : null, state,

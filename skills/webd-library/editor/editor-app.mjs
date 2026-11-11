@@ -62,7 +62,7 @@ async function load() {
   S.meta = d.meta; S.source = d.html; S.hash = d.hash; S.conflict = false;
   buildModel(d.html);
   $("canvas").classList.toggle("ui-checkerboard", !d.meta.background);
-  $("preview-bg").textContent = d.meta.background ? "조각 원본 배경" : "투명 배경";
+  $("preview-bg").textContent = d.meta.background ? "원래 배경" : "투명 배경";
   S.saved = styleBlocks(d.html);
   S.styles = S.saved.slice(); S.undo = []; S.redo = []; S.log = []; S.editing = null;
   $("name").textContent = d.meta.name;
@@ -215,7 +215,7 @@ function applyStyles() {
 }
 /** 지금 화면 그대로의 문서(저장 안 한 CSS 변경 포함). 내보내기가 쓴다. */
 function currentHtml() {
-  if (!S.source) throw new Error("아직 조각을 불러오지 못했습니다.");
+  if (!S.source) throw new Error("아직 컴포넌트를 불러오지 못했습니다.");
   return S.editable ? sourceWithEdits() : S.source;
 }
 
@@ -361,11 +361,11 @@ function renderTimeline() {
     setPreviewState(next.key);
     $("timeline").querySelector(`.tl-cell[data-key="${CSS.escape(next.key)}"]`)?.focus();
   });
-  const scope = S.selected && S.selected !== doc?.body && S.selected?.isConnected ? label(S.selected) : "조각 전체";
+  const scope = S.selected && S.selected !== doc?.body && S.selected?.isConnected ? label(S.selected) : "컴포넌트 전체";
   root.replaceChildren(
     el("div", { class: "tl-row" },
       el("span", { class: "tl-label", text: "상태" }),
-      S.states.length ? row : el("span", { class: "tl-empty", text: S.editable ? "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없습니다." : "이 조각은 화면에서 편집할 수 없어 상태를 찾지 않습니다." }),
+      S.states.length ? row : el("span", { class: "tl-empty", text: S.editable ? "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없습니다." : "이 컴포넌트는 화면에서 편집할 수 없어 상태를 찾지 않습니다." }),
       S.states.length ? el("span", { class: "tl-scope", text: S.stateKey === "normal" ? `${S.states.length}개 상태` : `${scope}에 걸림 · 저장 안 됨` }) : null),
     frameRow(),
   );

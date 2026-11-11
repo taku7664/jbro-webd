@@ -243,7 +243,7 @@ export function save(lib, o) {
   if (source.includes("\0")) throw Object.assign(usage("라이브러리에는 UTF-8 HTML만 저장합니다."), { status: 422 });
   const html = ensureDocument(source, name);
   if (category === "button" && !isSingleButton(html)) {
-    throw Object.assign(usage("button 분류는 조작 컨트롤 하나만 저장합니다(버튼·링크 하나). 글자·배지·장식 요소는 함께 둘 수 있지만, 버튼을 여러 개 늘어놓은 상태 비교 화면이나 입력칸이 섞인 조각은 다른 분류로 저장하세요."), { status: 422 });
+    throw Object.assign(usage("button 분류는 조작 컨트롤 하나만 저장합니다(버튼·링크 하나). 글자·배지·장식 요소는 함께 둘 수 있지만, 버튼을 여러 개 늘어놓은 상태 비교 화면이나 입력칸이 섞인 컴포넌트는 다른 분류로 저장하세요."), { status: 422 });
   }
 
   mkdirSync(lib, { recursive: true });
