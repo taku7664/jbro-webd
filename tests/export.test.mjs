@@ -448,3 +448,19 @@ test("라이브러리 서버 lan: 사설 IP Host를 받고, 토큰 없는 요청
     }
   } finally { await off.close(); await on.close(); }
 });
+
+test("3-slice 최소 크기: 한 축만 줄이고 다른 축은 원래 크기(숨긴 글자가 줄바꿈되어 높이가 늘지 않게)", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {
+  const { lib, id } = makeLib();
+  const srv = await startLibrary({ lib, token: "w".repeat(32) });
+  const CHIP = `<!doctype html><html><head><style>html,body{margin:0;background:#202020}
+.chip{position:absolute;left:10px;top:10px;display:inline-block;padding:0 8px;font:700 12px/22px sans-serif;background:#3a6;color:#fff}</style></head>
+<body><span class="chip">일반 등급 칩</span></body></html>`;
+  try {
+    const r = await req(srv.port, "POST", `/api/${encodeURIComponent(id)}/export`, { headers: { "x-webd-token": "w".repeat(32) }, body: { html: CHIP, write: false,
+      spec: { name: "chip", target: { kind: "element", path: [1, 0] }, bounds: "box", slice: { mode: "three-h", insets: { l: 8, t: 0, r: 8, b: 0 }, size: "compact", frameOnly: true } } } });
+    assert.equal(r.status, 200, r.text);
+    const img = decodePng(Buffer.from(r.json.previews[0].url.split(",")[1], "base64"));
+    assert.deepEqual([img.width, img.height], [20, 22], "폭만 8+8+4로, 높이는 그대로 22");
+    assert.ok(!r.json.warnings.some((w) => /줄여지지 않아/.test(w)), r.json.warnings.join(" / "));
+  } finally { await srv.close(); }
+});

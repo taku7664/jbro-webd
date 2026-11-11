@@ -98,6 +98,9 @@ async function preparePage(arg, applyState, rewriteCss, getAnimInfo) {
     set("box-sizing", "border-box");
     if (arg.resize.w != null) { set("width", want.w + "px"); set("min-width", "0"); set("max-width", "none"); set("flex", "none"); }
     if (arg.resize.h != null) { set("height", want.h + "px"); set("min-height", "0"); set("max-height", "none"); }
+    // 3-slice는 한 축만 줄인다. 다른 축은 원래 크기로 묶어 둔다(폭이 줄면 숨긴 글자가 줄바꿈되어 높이가 늘어나는 것을 막음)
+    if (arg.resize.w != null && arg.resize.h == null) { set("height", before.height + "px"); set("min-height", "0"); set("max-height", "none"); }
+    if (arg.resize.h != null && arg.resize.w == null) { set("width", before.width + "px"); set("min-width", "0"); set("max-width", "none"); }
     // 레이아웃 크기로 확인한다(상태가 transform: scale()을 걸어도 줄이기는 된 것). offsetWidth가 없는 SVG 등은 화면 크기로.
     const r0 = target.getBoundingClientRect();
     const got = target.offsetWidth != null ? { width: target.offsetWidth, height: target.offsetHeight } : r0;
