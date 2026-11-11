@@ -121,6 +121,10 @@ const P = {
   inbox: `<path d="M3.5 13.5L6 5.5H18L20.5 13.5V18.5A1.5 1.5 0 0 1 19 20H5A1.5 1.5 0 0 1 3.5 18.5Z"/><path d="M3.5 13.5H8.5L10 15.5H14L15.5 13.5H20.5"/>`,
   library: `<rect x="3.5" y="4" width="4" height="16" rx="1"/><rect x="9.5" y="4" width="4" height="16" rx="1"/><path d="M15.5 5.2L19.3 4.2L22 18.8L18.2 19.8Z"/>`,
   select: `<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 12.5L11 15.5L16.5 9" stroke-width="2"/>`,
+  "eye-off": `<path d="M4 4L20 20"/><path d="M10.6 6.2A8.6 8.6 0 0 1 12 6C16 6 19.5 8 21.5 12C20.9 13.3 20.1 14.4 19.2 15.3M15.9 17.1C14.7 17.7 13.4 18 12 18C8 18 4.5 16 2.5 12C3.4 10.1 4.6 8.7 6.1 7.6"/><path d="M10 10A3 3 0 0 0 14 14"/>`,
+  "panel-float": `<rect x="3.5" y="5.5" width="13" height="13" rx="1.5" stroke-opacity=".55"/><rect x="8" y="3" width="13" height="11" rx="1.5" fill="currentColor" fill-opacity=".18"/><path d="M8 6.5H21"/>`,
+  "panel-dock": `<rect x="3.5" y="4" width="17" height="16" rx="1.5"/><path d="M14.5 4V20"/><rect x="14.5" y="4" width="6" height="16" fill="currentColor" fill-opacity=".22" stroke="none"/>`,
+  grip: `<circle cx="9" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.3" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.3" fill="currentColor" stroke="none"/>`,
   terminal: `<rect x="3" y="4.5" width="18" height="15" rx="1.5"/><path d="M7 9.5L10 12L7 14.5M12.5 15H17"/>`,
 };
 

@@ -357,6 +357,30 @@ test("내보내기: CSS 애니메이션을 fps 간격 프레임으로 찍고, �
   } finally { await srv.close(); }
 });
 
+test("내보내기: 계층의 눈으로 숨긴 요소(data-webd-hidden)는 자리만 두고 그리지 않는다", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {
+  const lib = join(mkdtempSync(join(work, "hid-")), "library");
+  mkdirSync(lib, { recursive: true });
+  const src = join(work, `hid-${Date.now()}.html`);
+  writeFileSync(src, `<!doctype html><html><head><style>html,body{margin:0;background:transparent}
+.box{position:absolute;left:10px;top:10px;width:40px;height:20px;background:#f00}
+.box span{position:absolute;left:10px;top:5px;width:20px;height:10px;background:#0f0;visibility:visible}
+.tag{position:absolute;left:100px;top:10px;width:30px;height:30px;background:#00f}</style></head>
+<body><div class="box"><span class="txt">글</span></div><div class="tag"></div></body></html>`);
+  const { meta } = save(lib, { file: src, name: "숨김", category: "other", viewport: "200x80" });
+  const srv = await startLibrary({ lib, token: "h".repeat(32) });
+  const T = { "x-webd-token": "h".repeat(32) };
+  try {
+    // 편집기처럼 저장하지 않은 화면 내용(html)에 숨김 표시를 넣어 보낸다: 글자(span)와 오른쪽 파란 상자를 숨김
+    const html = readFileSync(join(lib, meta.id, "component.html"), "utf8")
+      .replace('<span class="txt">', '<span class="txt" data-webd-hidden>').replace('<div class="tag">', '<div class="tag" data-webd-hidden>');
+    const r = await req(srv.port, "POST", `/api/${encodeURIComponent(meta.id)}/export`, { headers: T, body: { html, spec: { name: "hid", bounds: "ink", background: "transparent" }, write: true } });
+    assert.equal(r.status, 200, r.text);
+    const png = decodePng(readFileSync(join(r.json.dir, "hid.png")));
+    assert.deepEqual([png.width, png.height], [40, 20], "숨긴 파란 상자는 범위에 들어가지 않음");
+    assert.deepEqual(px(png, 20, 10).slice(0, 3), [255, 0, 0], "숨긴 글자 자리(초록, visibility:visible이어도)는 빨간 바탕 그대로");
+  } finally { await srv.close(); }
+});
+
 test("내보내기: 실제 브라우저로 투명 PNG·9-slice JSON을 만든다", { skip: findBrowser() ? false : "Chrome·Edge 없음" }, async () => {
   const { lib, id } = makeLib();
   const srv = await startLibrary({ lib, token: "x".repeat(32) });

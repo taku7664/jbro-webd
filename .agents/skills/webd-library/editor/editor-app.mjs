@@ -22,6 +22,7 @@ function nowLocal(d = new Date()) {
 }
 const TOKEN = new URLSearchParams(location.search).get("t") || "";
 const ID = decodeURIComponent(location.pathname.split("/").filter(Boolean)[1] || "");
+const HIDDEN_ATTR = "data-webd-hidden";
 const STATE_PSEUDO = /:(hover|focus|focus-visible|focus-within|active|visited|target)\b/g;
 
 const S = {
@@ -299,13 +300,27 @@ let pan = null, spaceDown = false, suppressMenu = false, pickSheet = null;
  * 클릭이 그 요소를 지나 body가 골라지기 때문이다. 문서에 <style>을 넣지 않고 adoptedStyleSheets로 걸어
  * CSS 편집(style 요소 목록)과 저장 파일에는 영향이 없다.
  */
+let hiddenSheet = null;
 function applyPickCss() {
   if (!doc || !win) return;
   try {
     if (!pickSheet || pickSheet._win !== win) { pickSheet = new win.CSSStyleSheet(); pickSheet.replaceSync("*, *::before, *::after { pointer-events: auto !important; }"); pickSheet._win = win; }
-    const rest = [...doc.adoptedStyleSheets].filter((s) => s !== pickSheet);
-    doc.adoptedStyleSheets = S.pick ? [...rest, pickSheet] : rest;
+    // 눈으로 숨긴 요소: 자리는 그대로 두고 안 보이게(내보내기 capture.mjs도 같은 규칙)
+    if (!hiddenSheet || hiddenSheet._win !== win) { hiddenSheet = new win.CSSStyleSheet(); hiddenSheet.replaceSync(`[${HIDDEN_ATTR}], [${HIDDEN_ATTR}] *, [${HIDDEN_ATTR}]::before, [${HIDDEN_ATTR}]::after, [${HIDDEN_ATTR}] *::before, [${HIDDEN_ATTR}] *::after { visibility: hidden !important; }`); hiddenSheet._win = win; }
+    const rest = [...doc.adoptedStyleSheets].filter((s) => s !== pickSheet && s !== hiddenSheet);
+    doc.adoptedStyleSheets = S.pick ? [...rest, hiddenSheet, pickSheet] : [...rest, hiddenSheet];
   } catch {}
+}
+/** 눈: 요소 숨기기·보이기. 구조 변경 한 칸(되돌리기 가능)이고, 저장하면 data-webd-hidden이 파일에 남아 내보내기에도 적용된다 */
+function toggleHidden(path) {
+  if (!path) return;
+  const m = modelAt(path); if (!m || m === S.model.body) return;
+  const on = !m.hasAttribute(HIDDEN_ATTR);
+  mutate(on ? "element-hide" : "element-show", () => {
+    on ? m.setAttribute(HIDDEN_ATTR, "") : m.removeAttribute(HIDDEN_ATTR);
+    return { select: S.selPath ? modelAt(S.selPath) : null };
+  }, { label: label(m) });
+  flash(`${on ? "숨김" : "보임"}: ${label(m)}${on ? " · 내보내기에도 적용" : ""}`);
 }
 addEventListener("keydown", (e) => { if (e.code === "Space" && !isTextField(document.activeElement) && document.activeElement?.tagName !== "BUTTON") { spaceDown = true; document.body.classList.add("space-pan"); } });
 addEventListener("keyup", (e) => { if (e.code === "Space") { spaceDown = false; document.body.classList.remove("space-pan"); } });
@@ -782,6 +797,8 @@ function openMenu(x, y, target) {
     ["자식으로 붙여넣기", "Ctrl+Shift+V", () => paste(true), !clip?.html],
     null,
     ["이름 바꾸기", "F2", () => startRename(path), isBody],
+    ["이름 복사", "", () => copyText(label(target), `복사함: ${label(target)}`), isBody],
+    [!isBody && target.hasAttribute(HIDDEN_ATTR) ? "보이기" : "숨기기", "", () => toggleHidden(path), isBody],
     ["복제", "Ctrl+D", () => duplicateSelected(), isBody],
     ["삭제", "Delete", () => deleteSelected(), isBody],
     null,
@@ -798,7 +815,7 @@ function openMenu(x, y, target) {
   for (const it of items) {
     if (!it) { menuEl.append(el("div", { class: "ctx-sep", role: "separator" })); continue; }
     const [text, key, fn, off] = it;
-    const b = el("button", { type: "button", role: "menuitem", class: "ctx-item", disabled: off || (!can && text !== "복사") ? true : null },
+    const b = el("button", { type: "button", role: "menuitem", class: "ctx-item", disabled: off || (!can && text !== "복사" && text !== "이름 복사") ? true : null },
       el("span", { text }), el("kbd", { text: key }));
     b.addEventListener("click", () => { closeMenu(); fn(); });
     menuEl.append(b);
@@ -886,7 +903,20 @@ function renderTree() {
     row.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); select(node, true); openMenu(e.clientX, e.clientY, node); };
     const clip = readClip();
     if (clip?.cut && clip.from === ID && clip.cut.path.join(".") === path) item.classList.add("is-cut");
-    row.append(toggle, pick); item.append(row);
+    row.append(toggle, pick);
+    if (node !== doc.body) {
+      // 눈: 숨기기·보이기(자리는 그대로, 내보내기에도 적용). 숨긴 요소 안의 요소는 흐리게.
+      const hidden = node.hasAttribute(HIDDEN_ATTR);
+      if (hidden) item.classList.add("is-hidden"); else if (node.parentElement?.closest(`[${HIDDEN_ATTR}]`)) item.classList.add("in-hidden");
+      const eye = document.createElement("button"); eye.type = "button"; eye.className = "tree-eye" + (hidden ? " on" : "");
+      eye.setAttribute("aria-pressed", String(hidden));
+      eye.setAttribute("aria-label", `${label(node)} ${hidden ? "보이기" : "숨기기"}`);
+      eye.setAttribute("data-tip", hidden ? "보이기\n숨긴 요소를 다시 보이게 합니다." : "숨기기\n편집기 화면과 내보내기에서 숨깁니다(자리는 그대로). 저장하면 파일에 표시가 남습니다.");
+      eye.append(uiIcon(hidden ? "eye-off" : "eye"));
+      eye.onclick = (e) => { e.stopPropagation(); toggleHidden(pathOf(node)); };
+      row.append(eye);
+    }
+    item.append(row);
     if (children.length && !collapsed.has(path)) {
       const group = document.createElement("div"); group.className = "tree-children"; group.setAttribute("role", "group");
       for (const child of children) group.append(branch(child));
@@ -1418,12 +1448,17 @@ const EDITOR_MENUS = [
       { label: "요소 만들기", icon: "plus", disabled: !can, sub: () => Object.entries(CREATE).map(([k, d]) => ({ label: sel ? `자식 ${d.label}` : d.label, run: () => createElement(k, sel ? S.selPath : null) })) },
       { label: "빈 부모 만들기", key: "Ctrl+Shift+G", disabled: !sel || !can, run: wrapInParent },
       { label: "이름 바꾸기", icon: "edit", key: "F2", disabled: !sel || !can, run: () => startRename(S.selPath) },
+      { label: sel?.hasAttribute(HIDDEN_ATTR) ? "보이기" : "숨기기", icon: sel?.hasAttribute(HIDDEN_ATTR) ? "eye" : "eye-off", disabled: !sel || !can, tip: "숨기기·보이기\n편집기 화면과 내보내기에서 숨깁니다(자리는 그대로). 계층의 눈 아이콘과 같습니다.", run: () => toggleHidden(S.selPath) },
       null,
       { label: "요소 이름 복사", icon: "hash", disabled: !sel, tip: "요소 이름 복사\n고른 요소의 태그·id·클래스(예: span.ash-slot__rim)를 복사합니다.", run: () => copyText(label(sel), `복사함: ${label(sel)}`) },
       { label: "요소 CSS 복사", icon: "code", disabled: !sel, tip: "요소 CSS 복사\n고른 요소에 걸린 규칙과 켜진 속성을 글로 복사합니다(AI에게 물어볼 때 붙여 넣기 좋게).", run: () => copyText(`/* ${label(sel)} */\n${selectedCssText()}`, `CSS를 복사했습니다: ${label(sel)}`) },
     ];
   } },
   { label: "보기", items: () => [
+    { label: "계층 패널 떼어 내기", icon: "panel-float", checked: LAYOUT.treeFloat, run: () => setFloat("tree", !LAYOUT.treeFloat) },
+    { label: "오른쪽 패널 떼어 내기", icon: "panel-float", checked: LAYOUT.panelFloat, run: () => setFloat("panel", !LAYOUT.panelFloat) },
+    { label: "패널 배치 초기화", icon: "panel-dock", run: resetLayout },
+    null,
     { label: "요소 선택", icon: "pick", key: "V", checked: S.pick, tip: "요소 선택\n켜면 미리보기에서 왼쪽 클릭으로 요소를 고릅니다. 끄면 컴포넌트를 직접 조작합니다.", run: () => $("pick").click() },
     null,
     { label: "확대", icon: "zoom", key: "Ctrl+=", run: () => zoomStep(1) },
@@ -1475,6 +1510,85 @@ document.addEventListener("keydown", (e) => {
 $("zoom")?.addEventListener("click", () => fitView(false));
 initTooltips();
 for (const n of document.querySelectorAll("[data-icon]")) n.prepend(uiIcon(n.dataset.icon));
+
+// ---------- 패널 배치: 분할선으로 폭 조절, 떼어 내면 떠 있는 창(끌어서 옮기고 모서리로 크기 조절) ----------
+const LAYOUT_KEY = "webd-editor-layout";
+const LAYOUT_DEFAULT = { treeW: 250, panelW: 400, treeFloat: false, panelFloat: false, tree: null, panel: null };
+const LAYOUT = (() => { try { return { ...LAYOUT_DEFAULT, ...JSON.parse(localStorage.getItem(LAYOUT_KEY) || "{}") }; } catch { return { ...LAYOUT_DEFAULT }; } })();
+const PANELS = { tree: document.querySelector(".tree-panel"), panel: document.querySelector(".panel") };
+const saveLayout = () => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(LAYOUT)); } catch {} };
+const clampBox = (b) => {
+  const w = Math.min(Math.max(200, b.w), innerWidth - 16), h = Math.min(Math.max(180, b.h), innerHeight - 16);
+  return { w, h, x: Math.min(Math.max(8, b.x), innerWidth - Math.min(w, 120)), y: Math.min(Math.max(8, b.y), innerHeight - 40) };
+};
+function applyLayout() {
+  const rs = document.documentElement.style;
+  rs.setProperty("--tree-w", LAYOUT.treeFloat ? "0px" : `${LAYOUT.treeW}px`);
+  rs.setProperty("--panel-w", LAYOUT.panelFloat ? "0px" : `${LAYOUT.panelW}px`);
+  for (const key of ["tree", "panel"]) {
+    const el = PANELS[key], on = LAYOUT[`${key}Float`];
+    document.body.classList.toggle(`float-${key}`, on);
+    if (on) {
+      const b = LAYOUT[key] = clampBox(LAYOUT[key] || (key === "tree" ? { x: 16, y: 150, w: 280, h: 560 } : { x: innerWidth - 436, y: 150, w: 420, h: Math.min(680, innerHeight - 170) }));
+      Object.assign(el.style, { left: `${b.x}px`, top: `${b.y}px`, width: `${b.w}px`, height: `${b.h}px` });
+    } else for (const p of ["left", "top", "width", "height"]) el.style[p] = "";
+    const btn = $(`${key}-float`);
+    if (btn) {
+      btn.replaceChildren(uiIcon(on ? "panel-dock" : "panel-float"));
+      const name = key === "tree" ? "계층 패널" : "오른쪽 패널";
+      btn.setAttribute("aria-label", `${name} ${on ? "붙이기" : "떼어 내기"}`);
+      btn.setAttribute("data-tip", on ? `${name} 붙이기\n원래 자리로 되돌립니다.` : `${name} 떼어 내기\n떠 있는 창으로 만듭니다. 머리를 끌어 옮기고 오른쪽 아래 모서리로 크기를 조절합니다.`);
+    }
+  }
+  saveLayout(); needDraw = true;
+}
+function setFloat(key, on) { LAYOUT[`${key}Float`] = on; applyLayout(); }
+function resetLayout() { Object.assign(LAYOUT, LAYOUT_DEFAULT); applyLayout(); }
+$("tree-float")?.addEventListener("click", (e) => { e.stopPropagation(); setFloat("tree", !LAYOUT.treeFloat); });
+$("panel-float")?.addEventListener("click", (e) => { e.stopPropagation(); setFloat("panel", !LAYOUT.panelFloat); });
+// 분할선: 끌어서 폭 조절, 두 번 누르면 처음 폭
+for (const sp of document.querySelectorAll(".splitter")) {
+  const key = sp.dataset.for;
+  sp.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault(); sp.setPointerCapture(e.pointerId);
+    const sx = e.clientX, start = LAYOUT[`${key}W`];
+    sp.classList.add("is-active"); document.body.classList.add("resizing");
+    const move = (ev) => {
+      const d = ev.clientX - sx;
+      LAYOUT[`${key}W`] = key === "tree" ? Math.round(Math.min(560, Math.max(170, start + d))) : Math.round(Math.min(760, Math.max(300, start - d)));
+      applyLayout();
+    };
+    const up = () => { sp.removeEventListener("pointermove", move); sp.removeEventListener("pointerup", up); sp.removeEventListener("pointercancel", up); sp.classList.remove("is-active"); document.body.classList.remove("resizing"); };
+    sp.addEventListener("pointermove", move); sp.addEventListener("pointerup", up); sp.addEventListener("pointercancel", up);
+  });
+  sp.addEventListener("dblclick", () => { LAYOUT[`${key}W`] = LAYOUT_DEFAULT[`${key}W`]; applyLayout(); });
+}
+// 떠 있는 창 옮기기: 계층은 머리 줄, 오른쪽 패널은 왼쪽 손잡이(또는 탭 줄의 빈 곳)
+function dragFloat(key, handle) {
+  handle.addEventListener("pointerdown", (e) => {
+    if (!LAYOUT[`${key}Float`] || e.button !== 0 || e.target.closest("button:not(.panel-grip)")) return;
+    e.preventDefault(); handle.setPointerCapture(e.pointerId);
+    const sx = e.clientX, sy = e.clientY, b0 = { ...LAYOUT[key] };
+    document.body.classList.add("moving-panel");
+    const move = (ev) => { LAYOUT[key] = clampBox({ ...b0, x: b0.x + ev.clientX - sx, y: b0.y + ev.clientY - sy }); const el = PANELS[key]; el.style.left = `${LAYOUT[key].x}px`; el.style.top = `${LAYOUT[key].y}px`; };
+    const up = () => { handle.removeEventListener("pointermove", move); handle.removeEventListener("pointerup", up); handle.removeEventListener("pointercancel", up); document.body.classList.remove("moving-panel"); saveLayout(); };
+    handle.addEventListener("pointermove", move); handle.addEventListener("pointerup", up); handle.addEventListener("pointercancel", up);
+  });
+}
+dragFloat("tree", document.querySelector(".tree-heading"));
+dragFloat("panel", document.querySelector(".panel-head"));
+// 떠 있는 창의 모서리 크기 조절(CSS resize)을 기억한다
+const panelSizes = new ResizeObserver(() => {
+  for (const key of ["tree", "panel"]) {
+    if (!LAYOUT[`${key}Float`] || !LAYOUT[key]) continue;
+    const el = PANELS[key], w = el.offsetWidth, h = el.offsetHeight;
+    if (w && h && (w !== LAYOUT[key].w || h !== LAYOUT[key].h)) { LAYOUT[key] = { ...LAYOUT[key], w, h }; saveLayout(); }
+  }
+});
+panelSizes.observe(PANELS.tree); panelSizes.observe(PANELS.panel);
+addEventListener("resize", () => { if (LAYOUT.treeFloat || LAYOUT.panelFloat) applyLayout(); });
+applyLayout();
 addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
 
 if (!ID) banner("주소에 편집할 항목이 없습니다. library.mjs open으로 연 목록에서 카드를 고르세요.");

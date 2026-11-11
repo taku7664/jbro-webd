@@ -37,8 +37,9 @@
     <button type="button" data-view="style" aria-pressed="false">스타일</button>
   </nav>
   <aside class="tree-panel" aria-label="HTML 요소 트리">
-    <div class="tree-heading"><button type="button" id="tree-add" class="tree-add" data-icon="plus" data-tip="요소 만들기&#10;만들기·붙여넣기 메뉴를 엽니다(오른쪽 클릭과 같은 메뉴)." aria-label="요소 만들기" aria-haspopup="menu"></button><h2>계층</h2><span id="tree-count"></span></div>
+    <div class="tree-heading"><button type="button" id="tree-add" class="tree-add" data-icon="plus" data-tip="요소 만들기&#10;만들기·붙여넣기 메뉴를 엽니다(오른쪽 클릭과 같은 메뉴)." aria-label="요소 만들기" aria-haspopup="menu"></button><h2>계층</h2><span id="tree-count"></span><button type="button" id="tree-float" class="panel-float" aria-label="계층 패널 떼어 내기"></button></div>
     <div id="tree" class="tree-scroll" role="tree" aria-label="컴포넌트 본문 요소"></div>
+    <div class="splitter" data-for="tree" aria-hidden="true" data-tip="계층 패널 폭&#10;끌어서 조절합니다. 두 번 누르면 처음 폭으로."></div>
   </aside>
   <section class="stage-wrap" aria-label="미리보기">
     <div class="legend" aria-hidden="true">
@@ -58,11 +59,14 @@
   </section>
 
   <aside class="panel" aria-label="스타일">
+    <div class="splitter" data-for="panel" aria-hidden="true" data-tip="오른쪽 패널 폭&#10;끌어서 조절합니다. 두 번 누르면 처음 폭으로."></div>
+    <div class="panel-head"><span class="panel-grip" data-icon="grip" aria-hidden="true" data-tip="끌어서 옮기기"></span>
     <div class="tabs" role="tablist">
       <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules" data-icon="rules" data-tip="스타일&#10;고른 요소에 걸린 CSS 규칙을 보고 고칩니다. 값을 고치면 바로 반영되고, 저장해야 파일에 남습니다.">스타일</button>
       <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css" data-icon="code" data-tip="CSS 원문&#10;컴포넌트의 &lt;style&gt; 원문입니다. 고치는 대로 미리보기에 반영됩니다.">CSS 원문</button>
       <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export" data-icon="download" data-tip="내보내기&#10;게임용 PNG + 좌표 JSON(Aseprite 호환, Unity·Godot 값)을 씁니다.&#10;설정을 바꾸면 결과가 다시 렌더됩니다.">내보내기</button>
     </div>
+    <button type="button" id="panel-float" class="panel-float" aria-label="오른쪽 패널 떼어 내기"></button></div>
     <div class="pane" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
       <div class="pane-empty" id="hint" data-icon="pick" tabindex="0" data-tip="선택한 요소 없음&#10;왼쪽 계층에서 고르거나, 상단의 ‘요소 선택’을 켜고 미리보기에서 클릭하세요.">선택한 요소 없음</div>
       <div id="rules"></div>

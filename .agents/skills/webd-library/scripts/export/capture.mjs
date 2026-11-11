@@ -43,7 +43,8 @@ async function preparePage(arg, applyState, rewriteCss, getAnimInfo) {
   for (const a of document.getAnimations()) { try { a.pause(); a.currentTime = 0; } catch {} }
   const anim = getAnimInfo(document);
   target.setAttribute("data-webd-target", "");
-  let css = "";
+  // 편집기 계층의 눈으로 숨긴 요소(data-webd-hidden): 자리는 그대로 두고 그리지 않는다(편집기 화면과 같은 규칙)
+  let css = "[data-webd-hidden],[data-webd-hidden] *,[data-webd-hidden]::before,[data-webd-hidden]::after,[data-webd-hidden] *::before,[data-webd-hidden] *::after{visibility:hidden!important}";
   if (arg.transparent) css += "html,body{background:transparent!important;background-color:transparent!important}";
   if (target !== document.body) {
     css += "body *:not([data-webd-target]):not([data-webd-target] *){visibility:hidden!important}[data-webd-target]{visibility:visible!important}";
