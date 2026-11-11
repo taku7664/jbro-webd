@@ -250,6 +250,13 @@ function setupViewports(vp) {
 const ZMIN = 0.1, ZMAX = 16;
 const canvasSize = () => ({ w: $("canvas").offsetWidth, h: $("canvas").offsetHeight });
 function applyView() {
+  // 캔버스를 무대 밖으로 완전히 내보내지 않는다: 어느 쪽이든 가장자리 KEEP px은 늘 보이게
+  const st0 = $("stage"), { w: cw, h: ch } = canvasSize();
+  if (st0.clientWidth && cw) {
+    const KEEP = 56, W = cw * S.view.z, H = ch * S.view.z;
+    S.view.x = Math.min(st0.clientWidth - KEEP, Math.max(KEEP - W, S.view.x));
+    S.view.y = Math.min(st0.clientHeight - KEEP, Math.max(KEEP - H, S.view.y));
+  }
   const { x, y, z } = S.view;
   $("canvas").style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) scale(${z})`;
   const st = $("stage"), g = 24 * z;
@@ -339,6 +346,17 @@ function panMove(e) {
   if (!pan.moved) { pan.moved = true; document.body.classList.add("panning"); }
   S.view.x = pan.x + dx; S.view.y = pan.y + dy; applyView();
 }
+// 무대 오른쪽 아래 확대 도구(늘 보임): 축소 · 비율(누르면 100%) · 확대 · 화면에 맞춤
+(function stageTools() {
+  const box = document.createElement("div");
+  box.className = "stage-tools"; box.setAttribute("role", "toolbar"); box.setAttribute("aria-label", "캔버스 보기");
+  const btn = (ic, label, tip, run) => { const b = document.createElement("button"); b.type = "button"; b.className = "st-btn"; b.setAttribute("aria-label", label); b.setAttribute("data-tip", tip); if (ic) b.append(uiIcon(ic)); b.addEventListener("click", (e) => { e.stopPropagation(); run(); }); return b; };
+  const pct = btn(null, "100%로", "100%로\nCtrl+0", () => zoomTo(1)); pct.id = "zoom"; pct.classList.add("st-pct"); pct.textContent = "100%";
+  box.append(btn("minus", "축소", "축소\nCtrl+− · Ctrl+휠", () => zoomStep(-1)), pct, btn("plus", "확대", "확대\nCtrl+= · Ctrl+휠", () => zoomStep(1)),
+    btn("target-root", "화면에 맞춤", "화면에 맞춤\nF · Home · Shift+1\n캔버스를 잃어버렸을 때 누르면 가운데로 돌아옵니다.", () => fitView(false)));
+  for (const ev of ["pointerdown", "wheel", "contextmenu"]) box.addEventListener(ev, (e) => e.stopPropagation());
+  $("stage").append(box);
+})();
 function panEnd(e) {
   if (!pan) return;
   if (pan.moved && pan.button === 2) suppressMenu = true;   // 끌어서 이동했으면 뒤따르는 메뉴는 띄우지 않는다
@@ -1458,7 +1476,7 @@ function showHelp() {
       ["Ctrl+C · Ctrl+X · Ctrl+V", "요소 복사 · 잘라내기 · 붙여넣기(Shift: 자식으로)"], ["Ctrl+D · Delete · F2", "복제 · 삭제 · 이름 바꾸기"], ["Ctrl+Shift+G", "빈 부모 만들기"],
       ["Esc", "선택 해제"], ["F10 · Alt", "메뉴 바로 이동"],
       ["왼쪽 클릭", "요소 선택"], ["오른쪽 끌기 · 휠 · Space+끌기", "캔버스 이동"], ["오른쪽 클릭", "요소 메뉴"],
-      ["Ctrl+휠 · Ctrl+= · Ctrl+−", "확대·축소"], ["Ctrl+0 · Shift+1", "100% · 화면에 맞춤"]];
+      ["Ctrl+휠 · Ctrl+= · Ctrl+−", "확대·축소"], ["Ctrl+0", "100%"], ["F · Home · Shift+1", "화면에 맞춤(캔버스로 돌아오기)"]];
     dlg = el("dialog", { id: "help", class: "help", "aria-labelledby": "help-title" },
       el("h2", { id: "help-title" }, uiIcon("info"), "단축키"),
       el("dl", {}, ...rows.flatMap(([k, t]) => [el("dt", {}, el("kbd", { text: k })), el("dd", { text: t })])),
@@ -1510,7 +1528,7 @@ const EDITOR_MENUS = [
     { label: "확대", icon: "zoom", key: "Ctrl+=", run: () => zoomStep(1) },
     { label: "축소", key: "Ctrl+−", run: () => zoomStep(-1) },
     { label: "100%", key: "Ctrl+0", checked: Math.abs(S.view.z - 1) < 1e-3, run: () => zoomTo(1) },
-    { label: "화면에 맞춤", icon: "size-compact", key: "Shift+1", run: () => fitView(false) },
+    { label: "화면에 맞춤", icon: "target-root", key: "F", tip: "화면에 맞춤\nF · Home · Shift+1\n캔버스를 잃어버렸을 때 누르면 가운데로 돌아옵니다.", run: () => fitView(false) },
     null,
     { label: "전체 간격 보기", icon: "spacing", checked: S.all, run: () => $("all").click() },
     { label: "미리보기 폭", icon: "viewport", sub: () => [...$("vp").options].map((o) => ({ label: o.textContent, checked: $("vp").value === o.value, run: () => { $("vp").value = o.value; $("vp").dispatchEvent(new Event("change")); } })) },
@@ -1552,8 +1570,8 @@ document.addEventListener("keydown", (e) => {
   else if (mod && !e.altKey && (e.key === "-" || e.key === "_")) { e.preventDefault(); zoomStep(-1); }
   else if (mod && !e.altKey && e.key === "0") { e.preventDefault(); zoomTo(1); }
   else if (!mod && e.shiftKey && (e.code === "Digit1")) { e.preventDefault(); fitView(false); }
+  else if (!mod && !e.altKey && !e.shiftKey && (e.key === "Home" || e.key.toLowerCase() === "f")) { e.preventDefault(); fitView(false); }
 });
-$("zoom")?.addEventListener("click", () => fitView(false));
 initTooltips();
 for (const n of document.querySelectorAll("[data-icon]")) n.prepend(uiIcon(n.dataset.icon));
 

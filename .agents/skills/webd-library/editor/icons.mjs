@@ -90,6 +90,7 @@ const P = {
   save: `<path d="M5 4H16L20 8V18.5A1.5 1.5 0 0 1 18.5 20H5.5A1.5 1.5 0 0 1 4 18.5V5.5A1.5 1.5 0 0 1 5.5 4Z"/><path d="M8 4V9H15V4M7.5 20V14H16.5V20"/>`,
   // ---------- 계층·타임라인 ----------
   plus: `<path d="M12 5V19M5 12H19"/>`,
+  minus: `<path d="M5 12H19"/>`,
   "chevron-right": `<path d="M10 7L15 12L10 17"/>`,
   "chevron-down": `<path d="M7 10L12 15L17 10"/>`,
   play: `<path d="M8 5.5V18.5L18.5 12Z" fill="currentColor"/>`,
