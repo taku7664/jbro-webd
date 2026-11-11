@@ -331,21 +331,71 @@ function toggleHidden(path) {
 }
 addEventListener("keydown", (e) => { if (e.code === "Space" && !isTextField(document.activeElement) && document.activeElement?.tagName !== "BUTTON") { spaceDown = true; document.body.classList.add("space-pan"); } });
 addEventListener("keyup", (e) => { if (e.code === "Space") { spaceDown = false; document.body.classList.remove("space-pan"); } });
+/**
+ * 입력 위치를 바깥 창 좌표로. 미리보기(iframe) 안에서 온 입력은 캔버스의 지금 위치·배율로 바꾼다.
+ * screenX는 쓰지 않는다: 확대(transform)된 iframe 안과 바깥의 screenX가 화면 배율에 따라 서로 어긋나
+ * 두 곳에서 번갈아 받으면 캔버스가 떨리며 튄다.
+ */
+function windowPoint(e, fromDoc) {
+  if (!fromDoc) return { x: e.clientX, y: e.clientY };
+  const fr = $("frame").getBoundingClientRect();
+  return { x: fr.left + e.clientX * S.view.z, y: fr.top + e.clientY * S.view.z };
+}
 /** 끌기 시작. 오른쪽은 움직여야 이동이 되고, 안 움직이고 떼면 메뉴(contextmenu)로 넘긴다 */
-function panStart(e) {
+function panStart(e, fromDoc = false) {
   const isPan = e.button === 1 || e.button === 2 || (e.button === 0 && spaceDown);
   if (!isPan) return false;
-  pan = { sx: e.screenX, sy: e.screenY, x: S.view.x, y: S.view.y, moved: false, button: e.button };
+  const p = windowPoint(e, fromDoc);
+  pan = { sx: p.x, sy: p.y, x: S.view.x, y: S.view.y, moved: false, button: e.button };
   if (e.button !== 2) e.preventDefault();
   return true;
 }
-function panMove(e) {
+function panMove(e, fromDoc = false) {
   if (!pan) return;
-  const dx = e.screenX - pan.sx, dy = e.screenY - pan.sy;
+  const p = windowPoint(e, fromDoc);
+  const dx = p.x - pan.sx, dy = p.y - pan.sy;
   if (!pan.moved && Math.hypot(dx, dy) < 4) return;
   if (!pan.moved) { pan.moved = true; document.body.classList.add("panning"); }
   S.view.x = pan.x + dx; S.view.y = pan.y + dy; applyView();
 }
+/**
+ * 선택 모드(요소 고르기·영역 표시) ↔ 보기 모드(실제 화면처럼: 표시를 끄고 호버·누름을 컴포넌트가 그대로 받음).
+ * 위쪽 '요소 선택' 버튼, V 키, 보기 메뉴, 캔버스 오른쪽 위 도구 막대가 모두 이 함수를 부른다.
+ */
+function setPick(on) {
+  S.pick = on; S.hovered = null; needDraw = true;
+  $("pick").setAttribute("aria-pressed", String(on));
+  $("overlay").hidden = !on;
+  document.body.classList.toggle("view-mode", !on);
+  applyPickCss();
+  for (const b of document.querySelectorAll(".mode-bar [data-mode]")) b.setAttribute("aria-checked", String((b.dataset.mode === "pick") === on));
+  const sp = document.querySelector(".mode-bar [data-spacing]");
+  if (sp) { sp.setAttribute("aria-pressed", String(S.all)); sp.disabled = !on; }
+}
+// 캔버스 오른쪽 위 도구 막대: 선택 / 보기, 전체 간격
+(function modeBar() {
+  const bar = document.createElement("div");
+  bar.className = "mode-bar";
+  const group = document.createElement("div"); group.className = "mb-seg"; group.setAttribute("role", "radiogroup"); group.setAttribute("aria-label", "캔버스 모드");
+  const mk = (mode, ic, label, tip) => {
+    const b = document.createElement("button"); b.type = "button"; b.dataset.mode = mode; b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String((mode === "pick") === S.pick)); b.setAttribute("data-tip", tip);
+    b.append(uiIcon(ic), Object.assign(document.createElement("span"), { textContent: label }));
+    b.addEventListener("click", (e) => { e.stopPropagation(); setPick(mode === "pick"); });
+    return b;
+  };
+  group.append(
+    mk("pick", "pick", "선택", "선택 모드 (V)\n클릭으로 요소를 고르고, 마우스를 올린 요소의 영역(margin·border·padding)을 보여 줍니다."),
+    mk("view", "eye", "보기", "보기 모드 (V)\n선택·영역 표시를 끄고 실제 화면처럼 봅니다. 마우스를 올리거나 누르면 컴포넌트의 호버·누름 모습이 그대로 나옵니다."));
+  const sp = document.createElement("button"); sp.type = "button"; sp.className = "mb-tog"; sp.dataset.spacing = "1";
+  sp.setAttribute("aria-label", "전체 간격 보기"); sp.setAttribute("aria-pressed", String(S.all));
+  sp.setAttribute("data-tip", "전체 간격 보기\n모든 요소의 margin·padding 영역을 한꺼번에 보여 줍니다(선택 모드에서).");
+  sp.append(uiIcon("spacing"));
+  sp.addEventListener("click", (e) => { e.stopPropagation(); $("all").click(); sp.setAttribute("aria-pressed", String(S.all)); });
+  bar.append(group, sp);
+  for (const ev of ["pointerdown", "wheel", "contextmenu", "click"]) bar.addEventListener(ev, (e) => e.stopPropagation());
+  $("stage").append(bar);
+})();
 // 무대 오른쪽 아래 확대 도구(늘 보임): 축소 · 비율(누르면 100%) · 확대 · 화면에 맞춤
 (function stageTools() {
   const box = document.createElement("div");
@@ -374,8 +424,8 @@ function canvasMenu(e, target, fromDoc) {
 (function setupStage() {
   const st = $("stage");
   st.addEventListener("wheel", (e) => onWheel(e, false), { passive: false });
-  st.addEventListener("pointerdown", (e) => { if (panStart(e)) st.setPointerCapture(e.pointerId); });
-  st.addEventListener("pointermove", panMove);
+  st.addEventListener("pointerdown", (e) => { if (panStart(e, false)) st.setPointerCapture(e.pointerId); });
+  st.addEventListener("pointermove", (e) => panMove(e, false));
   st.addEventListener("pointerup", panEnd);
   st.addEventListener("pointercancel", panEnd);
   // 캔버스 밖 빈 곳: 왼쪽 클릭 = 선택 해제, 오른쪽 클릭 = 최상위(body) 메뉴
@@ -396,8 +446,8 @@ $("frame").addEventListener("load", () => {
   applyStyles();
   // 캔버스 입력: 미리보기 안에서도 오른쪽 끌기 = 이동, 오른쪽 클릭 = 메뉴, 휠 = 이동·확대
   doc.addEventListener("wheel", (e) => onWheel(e, true), { passive: false, capture: true });
-  doc.addEventListener("pointerdown", (e) => { if (panStart(e)) { try { doc.documentElement.setPointerCapture(e.pointerId); } catch {} if (e.button !== 2) e.stopPropagation(); } }, true);
-  doc.addEventListener("pointermove", panMove, true);
+  doc.addEventListener("pointerdown", (e) => { if (panStart(e, true)) { try { doc.documentElement.setPointerCapture(e.pointerId); } catch {} if (e.button !== 2) e.stopPropagation(); } }, true);
+  doc.addEventListener("pointermove", (e) => panMove(e, true), true);
   doc.addEventListener("pointerup", panEnd, true);
   doc.addEventListener("pointercancel", panEnd, true);
   doc.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); }, true);
@@ -1361,7 +1411,7 @@ const exp = ID ? initExport({
   pathOf, label, resolve: (p) => (doc ? resolvePath(p) : null),
   frameDoc: () => doc, frameWin: () => win,
 }) : null;
-$("pick").onclick = () => { S.pick = !S.pick; $("pick").setAttribute("aria-pressed", String(S.pick)); S.hovered = null; needDraw = true; applyPickCss(); };
+$("pick").onclick = () => setPick(!S.pick);
 $("all").onclick = () => { S.all = !S.all; $("all").setAttribute("aria-pressed", String(S.all)); needDraw = true; };
 $("undo").onclick = undo; $("redo").onclick = redo; $("save").onclick = () => save();
 
@@ -1523,7 +1573,8 @@ const EDITOR_MENUS = [
     { label: "오른쪽 패널 떼어 내기", icon: "panel-float", checked: LAYOUT.panelFloat, run: () => setFloat("panel", !LAYOUT.panelFloat) },
     { label: "패널 배치 초기화", icon: "panel-dock", run: resetLayout },
     null,
-    { label: "요소 선택", icon: "pick", key: "V", checked: S.pick, tip: "요소 선택\n켜면 미리보기에서 왼쪽 클릭으로 요소를 고릅니다. 끄면 컴포넌트를 직접 조작합니다.", run: () => $("pick").click() },
+    { label: "선택 모드", icon: "pick", key: "V", checked: S.pick, tip: "선택 모드\n클릭으로 요소를 고르고 영역을 보여 줍니다.", run: () => setPick(true) },
+    { label: "보기 모드", icon: "eye", key: "V", checked: !S.pick, tip: "보기 모드\n표시를 끄고 실제 화면처럼 봅니다(호버·누름이 그대로).", run: () => setPick(false) },
     null,
     { label: "확대", icon: "zoom", key: "Ctrl+=", run: () => zoomStep(1) },
     { label: "축소", key: "Ctrl+−", run: () => zoomStep(-1) },

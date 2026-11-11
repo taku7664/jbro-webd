@@ -484,3 +484,16 @@ body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: no
 .st-btn:hover { background: var(--bg); }
 .st-btn .ic svg { width: 15px; height: 15px; }
 .st-pct { min-width: 48px; font: 600 11.5px/1 var(--mono); }
+
+/* 캔버스 오른쪽 위 도구 막대: 선택 / 보기, 전체 간격 */
+.mode-bar { position: absolute; top: 12px; right: 12px; z-index: 8; display: flex; align-items: center; gap: 4px; padding: 3px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.14); }
+.mb-seg { display: flex; gap: 2px; padding-right: 4px; border-right: 1px solid var(--line); }
+.mb-seg button, .mb-tog { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px 0 7px; border: 0; border-radius: 5px;
+                          background: none; color: var(--muted); font: 600 12px/1 var(--font); cursor: pointer; }
+.mb-tog { padding: 0 7px; }
+.mb-seg button:hover, .mb-tog:hover:not(:disabled) { background: var(--bg); color: var(--text); }
+.mb-seg button[aria-checked="true"] { background: var(--accent); color: var(--on-accent); }
+.mb-tog[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.mb-tog:disabled { opacity: .35; cursor: default; }
+.mode-bar .ic svg { width: 15px; height: 15px; }
