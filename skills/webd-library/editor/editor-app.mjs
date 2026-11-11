@@ -407,11 +407,22 @@ function setPick(on) {
   for (const ev of ["pointerdown", "wheel", "contextmenu"]) box.addEventListener(ev, (e) => e.stopPropagation());
   $("stage").append(box);
 })();
+let suppressTimer = null;
 function panEnd(e) {
   if (!pan) return;
-  if (pan.moved && pan.button === 2) suppressMenu = true;   // 끌어서 이동했으면 뒤따르는 메뉴는 띄우지 않는다
+  if (pan.moved && pan.button === 2) {
+    // 끌어서 이동했으면 뒤따르는 우클릭 메뉴는 띄우지 않는다. 손을 뗀 곳이 캔버스 밖(계층·오른쪽 패널 등)이어도 같다.
+    suppressMenu = true;
+    clearTimeout(suppressTimer); suppressTimer = setTimeout(() => { suppressMenu = false; }, 400);
+  }
   pan = null; document.body.classList.remove("panning");
 }
+// 창 어디서든(캡처 단계에서 가장 먼저) 끌기 직후의 우클릭 메뉴를 한 번 막는다
+addEventListener("contextmenu", (e) => {
+  if (!suppressMenu && !pan?.moved) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  suppressMenu = false;
+}, true);
 /** 오른쪽 클릭(끌지 않음): 그 자리 요소를 고르고 메뉴. target이 없으면 최상위(body) 메뉴 */
 function canvasMenu(e, target, fromDoc) {
   e.preventDefault();
