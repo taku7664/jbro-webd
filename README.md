@@ -68,13 +68,17 @@ skills/webd/
 skills/webd-library/
   SKILL.md             저장·목록·재사용·삭제 절차
   scripts/
-    library.mjs        save / list / show / remove / index / path / open / edit
+    library.mjs        save / list / move / folder / show / remove / index / path / open / edit / atlas
+    folders.mjs        가상 폴더(meta.json의 folder)와 프리셋 종류(kind)
     gallery.mjs        목록 페이지(index.html) 생성
     editor-server.mjs  목록·편집기·내보내기 로컬 서버 (127.0.0.1 전용)
     export/            스프라이트 내보내기: spec·capture(헤드리스 렌더)·png·pack·formats·run
   editor/
     editor.html, editor.css, editor-app.mjs   편집 화면
     export-panel.mjs   편집기의 내보내기 탭
+    menubar.mjs, menubar.css  목록·편집기 맨 위 메뉴 바(파일·편집·보기…)
+    icons.mjs          도구 아이콘(9·3-slice, 배율, 인셋 변 등 직접 그린 것 포함)
+    tooltip.mjs        설명을 띄우는 툴팁(data-tip)
     css-model.mjs      CSS 원문을 자리만 고치는 모델 (화면·테스트 공용)
     states.mjs         상태 찾기·걸기(편집기 타임라인과 내보내기 공용)
     anim.mjs           애니메이션 길이 재기·프레임 시각 옮기기(타임라인 프레임 줄과 내보내기 공용)
@@ -176,10 +180,12 @@ node skills/webd/tools/serve-image-tokens.mjs
 
 기본 저장 위치는 `~/.webd/library/`입니다. `--lib <폴더>` 또는 `WEBD_LIBRARY` 환경 변수로 바꿀 수 있습니다.
 
-라이브러리에는 재사용할 UI 컴포넌트를 HTML로 저장합니다. `button` 분류에는 실제 버튼이나 CTA 링크 하나를 넣습니다(그 옆 글자·배지·장식 요소는 허용, 조작 컨트롤이 둘 이상이면 저장 거절). 상태 비교 화면과 스프라이트 시트는 별도 산출물로 관리합니다.
+라이브러리는 재사용할 UI를 **프리셋**으로 저장하는 저장소입니다. 정리는 사용자가 만드는 **가상 폴더**(하위 폴더 가능)로 하고, 종류(컴포넌트·화면·무늬/아이콘·토큰·효과)는 무엇을 저장했는지만 나타냅니다. 폴더는 `meta.json`의 경로일 뿐이라 편집기 주소·묶음 시트·내보내기 경로는 폴더를 바꿔도 그대로입니다. `button` 분류에는 실제 버튼이나 CTA 링크 하나를 넣습니다(그 옆 글자·배지·장식 요소는 허용, 조작 컨트롤이 둘 이상이면 저장 거절). 상태 비교 화면과 스프라이트 시트는 별도 산출물로 관리합니다.
 
 ```
-node skills/webd-library/scripts/library.mjs save --file part.html --name "가격 표" --category table --tags 가격,구독
+node skills/webd-library/scripts/library.mjs save --file part.html --name "가격 표" --kind component --folder "웹/요금제" --tags 가격,구독
+node skills/webd-library/scripts/library.mjs move <id> --folder "웹/요금제"   # 폴더로 옮기기
+node skills/webd-library/scripts/library.mjs folder list                    # folder add·rename·remove·suggest [--apply]
 node skills/webd-library/scripts/library.mjs list --sort updated --since 2026-10-01 --until 2026-10-31
 node skills/webd-library/scripts/library.mjs index      # 목록 페이지 다시 만들기
 # 더 쉽게: 저장소 루트의 webd-library.cmd를 더블클릭(Windows, 인자 그대로 전달: webd-library.cmd --lan),
@@ -188,12 +194,12 @@ node skills/webd-library/scripts/library.mjs open       # 라이브러리 서버
 node skills/webd-library/scripts/library.mjs edit <id>  # 같은 서버를 열고 그 컴포넌트의 편집기를 바로 띄움
 ```
 
-- 컴포넌트마다 `component.html`(단독으로 열림)과 `meta.json`(이름, 분류, 태그, 저장·수정 시각, 출처, 미리보기 크기, 원래 배경색 `background`)을 둡니다.
+- 프리셋마다 `component.html`(단독으로 열림)과 `meta.json`(이름, 종류 `kind`, 폴더 `folder`, 분류, 태그, 저장·수정 시각, 출처, 미리보기 크기, 원래 배경색 `background`)을 둡니다. 빈 폴더 목록은 `.folders.json`에 둡니다.
 - 같은 id로 다시 저장하면 이전 파일은 `history/`로 가고 저장 시각은 유지됩니다. 같은 초에 여러 번 저장해도 history 파일이 덮이지 않습니다.
 - `remove`는 `.trash/`로 옮기기만 합니다.
 - 썸네일은 이미지 파일이 아니라 `component.html`을 iframe으로 띄워 축소한 실제 렌더입니다. 별도 캡처 도구가 필요 없고 저장한 코드가 바뀌면 바로 반영되지만, 항목이 많으면 무거워지고 웹폰트는 네트워크가 있어야 보입니다.
-- 목록 페이지(`index.html`)는 `file://`로 열립니다. 미리보기, 검색, 분류·태그·기간 필터, 저장일·수정일·이름·분류 정렬, HTML 복사를 지원하고 라이트·다크 모드를 따릅니다.
-- **미리보기 배경 원래/중립**: 기본은 컴포넌트 원래 배경입니다. 중립으로 바꾸면 라이트 `#E2E6E8`, 다크 `#2C3236` 단색 위에 보여 주고 카드에 원래 배경색 칩을 붙입니다. 고른 값은 그 브라우저에만 기억합니다. `file://`에서는 iframe 안을 바깥에서 고칠 수 없어서(Chromium의 `contentDocument`가 `null`) 중립일 때만 배경 덮어쓰기를 넣은 사본을 `srcdoc`으로 띄웁니다. 저장된 `component.html`은 바뀌지 않습니다.
+- 목록 페이지(`index.html`)는 `file://`로도 열립니다. 맨 위 메뉴 바(파일·편집·보기·내보내기·도움말), 왼쪽 폴더 트리, 미리보기, 검색, 종류·태그·기간 필터, 저장일·수정일·이름·종류 정렬, HTML 복사를 지원하고 라이트·다크 모드를 따릅니다. 서버로 열면 카드를 폴더로 끌어 옮기고, 카드 왼쪽 위 선택으로 여러 개를 골라 옮기기·내보내기·묶음 시트·휴지통을 합니다.
+- **미리보기 배경 원래/중립**(보기 메뉴): 기본은 컴포넌트 원래 배경입니다. 중립으로 바꾸면 라이트 `#E2E6E8`, 다크 `#2C3236` 단색 위에 보여 주고 카드에 원래 배경색 칩을 붙입니다. 고른 값은 그 브라우저에만 기억합니다. `file://`에서는 iframe 안을 바깥에서 고칠 수 없어서(Chromium의 `contentDocument`가 `null`) 중립일 때만 배경 덮어쓰기를 넣은 사본을 `srcdoc`으로 띄웁니다. 저장된 `component.html`은 바뀌지 않습니다.
 
 ### CSS 편집
 
@@ -201,6 +207,7 @@ Codex에서는 `open --no-open`(또는 `edit <id> --no-open`)으로 `127.0.0.1` 
 목록과 편집기는 `skills/webd-library/editor/theme.css`의 색·서체·공통 작업 막대·표면·주 버튼 스타일을 함께 사용합니다. 목록은 `index` 생성 시 이 CSS를 HTML에 포함합니다.
 편집기 계층의 요소 아이콘은 Lucide Static 1.71.0에서 필요한 SVG만 로컬 자산으로 포함했습니다. 라이선스는 `skills/webd-library/editor/LUCIDE-LICENSE.txt`에 있습니다.
 
+- **메뉴 바**: 맨 위 한 줄에 파일(저장·복제해서 새 프리셋·이전 버전으로 되돌리기·폴더로 옮기기)·편집(요소 편집·요소 이름/CSS 복사)·보기·상태(상태 걸기·재생·프레임)·내보내기(Ctrl+E·배율·묶음 시트에 넣기)·도움말이 있습니다. 설명은 모두 툴팁으로 보여 줍니다.
 - **계층과 스타일 탭**: 왼쪽의 간결한 본문 요소 트리에서 요소를 펼치거나 접고 고릅니다(`script`·`style`·`template`은 숨김). 고른 요소는 미리보기에 강조되고, 오른쪽 스타일 탭에서 속성 이름과 값이 정렬된 열로 나타납니다. 상단 박스 모델은 유지합니다.
 - **미리보기 배경과 크기**: 편집기는 저장된 미리보기 너비와 높이로 컴포넌트를 보여 줍니다. 컴포넌트 문서에 배경이 없으면 목록과 편집기 모두 체크무늬로 투명 영역을 표시합니다. 체크무늬는 저장 HTML에 포함되지 않습니다.
 - **계층 구조 편집(유니티처럼)**: 요소를 오른쪽 클릭하거나 계층 위 `+`로 메뉴를 엽니다.
@@ -229,7 +236,7 @@ Codex에서는 `open --no-open`(또는 `edit <id> --no-open`)으로 `127.0.0.1` 
 - 출력: `<라이브러리 실제 경로의 상위>/export/<id>/`(컴포넌트마다 다른 폴더 지정 가능). PNG마다 같은 이름의 Aseprite 호환 JSON이 붙고, `meta.webd.engines`에 Unity·Godot·CSS `border-image` 값이 들어 있습니다.
 - **애니메이션**: CSS 애니메이션(`@keyframes`)이 돌고 있으면 상태마다 길이를 재서 fps(8·12·24·30·60) 간격 프레임으로 찍습니다. 주기가 다른 반복이 섞이면 최소공배수 길이로 찍어 끝과 처음이 이어집니다. 모든 프레임은 같은 크기이고, JSON에는 `이름_상태_번호` 프레임, `duration`, 상태별 `frameTags`, `meta.webd.animation`이 들어갑니다. 내보내기 탭 결과 칸에서 프레임이 재생됩니다.
 - **타임라인 프레임 줄**: 상태 줄 아래에서 ▶/❚❚로 재생·멈춤, 프레임 칸을 누르거나 누른 채 끌어 훑기(스크럽, 줄 끝에 대면 계속 스크롤)·←→, fps 고르기. 플래시 타임라인처럼 5칸마다 번호가 있습니다.
-- **묶음 시트**: 목록에서 카드의 "묶음"을 체크해 여러 컴포넌트를 각자의 내보내기 설정대로 찍어 한 장(넘치면 여러 장)에 빽빽하게 모읍니다(MaxRects, 투명 여백 다듬기, 기본 최대 2048). 명령줄: `node skills/webd-library/scripts/library.mjs atlas <이름> --members <id>,<id>`. 출력은 `<내보내기 루트>/atlases/<이름>/`.
+- **묶음 시트**: 목록의 내보내기 › 묶음 시트 만들기(고른 카드, 없으면 고른 폴더)로 오른쪽 서랍을 열어 여러 프리셋을 각자의 내보내기 설정대로 찍어 한 장(넘치면 여러 장)에 빽빽하게 모읍니다(MaxRects, 투명 여백 다듬기, 기본 최대 2048). 편집기에서는 내보내기 › 묶음 시트에 넣기로 더합니다. 명령줄: `node skills/webd-library/scripts/library.mjs atlas <이름> --members <id>,<id>`. 출력은 `<내보내기 루트>/atlases/<이름>/`.
 - 다음 단계: 엔진 가져오기 파일(Unity·Godot).
 
 ## 테스트

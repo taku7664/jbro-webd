@@ -7,6 +7,9 @@ import {
   varRefs, countVarUses, nudge, lineOf,
 } from "./css-model.mjs";
 import { initExport } from "./export-panel.mjs";
+import { initTooltips } from "./tooltip.mjs";
+import { icon as uiIcon } from "./icons.mjs";
+import { createMenubar } from "./menubar.mjs";
 import { bodyRange, replaceBody, cssForCopy, mergeCss, classValue, clipboardText } from "./structure.mjs";
 import { findStates, applyWebdState, revertWebdState, rewriteStateSelectors, rewriteStateSelector } from "./states.mjs";
 import { animInfo, seekAnimations, frameTimes, FPS_CHOICES } from "./anim.mjs";
@@ -111,6 +114,7 @@ async function save(force = false) {
   // 저장한 원문으로 모델을 다시 만들되, 미리보기와 같은 구조인지 확인해 둔다(경로가 그대로 맞아야 한다)
   buildModel(d.html);
   hideBanner(); updateState(`저장됨 · 버전 ${d.meta.versions}`);
+  refreshLibInfo();
 }
 
 /** 화면 변경을 버리고 파일을 다시 읽는다. 남은 초안도 지운다. */
@@ -332,7 +336,10 @@ function currentFrame() {
 function markFrame() {
   const f = S.playing ? currentFrame() : S.frame;
   const btn = $("timeline").querySelector(".tl-play");
-  if (btn) { btn.textContent = S.playing ? "❚❚" : "▶"; btn.setAttribute("aria-pressed", String(S.playing)); btn.title = S.playing ? "멈추고 지금 칸 보기" : "재생"; }
+  if (btn && btn.getAttribute("aria-pressed") !== String(S.playing)) {
+    btn.replaceChildren(uiIcon(S.playing ? "pause" : "play")); btn.setAttribute("aria-pressed", String(S.playing));
+    btn.setAttribute("aria-label", S.playing ? "멈춤" : "재생"); btn.setAttribute("data-tip", S.playing ? "멈춤\n멈추고 지금 칸을 봅니다." : "재생");
+  }
   for (const c of $("timeline").querySelectorAll(".tl-frame")) c.classList.toggle("is-now", Number(c.dataset.i) === f);
   const out = $("timeline").querySelector(".tl-frame-no"); if (out) out.textContent = `${f + 1}/${animTimes().times.length}`;
 }
@@ -350,7 +357,7 @@ function renderTimeline() {
     const on = s.key === S.stateKey;
     const how = s.tokens.map((t) => t.kind === "pseudo" ? `:${t.name}` : t.kind === "attr" ? `[${t.name}="${t.value}"]` : `.${t.name}`).join(" + ");
     row.append(el("button", { type: "button", role: "radio", class: "tl-cell" + (s.combo ? " is-combo" : ""), "aria-checked": String(on), tabindex: on ? "0" : "-1",
-      title: s.key === "normal" ? "아무 상태도 걸지 않은 모습" : `${how} — 미리보기에만 걸고 저장하지 않습니다`, "data-key": s.key,
+      "data-tip": s.key === "normal" ? "기본\n아무 상태도 걸지 않은 모습입니다." : `${s.label}\n${how}\n미리보기에만 걸고 저장하지 않습니다.`, "data-key": s.key,
       onclick: () => setPreviewState(s.key) }, el("span", { class: "tl-name", text: s.label })));
   }
   row.addEventListener("keydown", (e) => {   // ← → 로 칸 옮기기
@@ -365,7 +372,7 @@ function renderTimeline() {
   root.replaceChildren(
     el("div", { class: "tl-row" },
       el("span", { class: "tl-label", text: "상태" }),
-      S.states.length ? row : el("span", { class: "tl-empty", text: S.editable ? "CSS에 상태 규칙(:hover, [aria-pressed] 등)이 없습니다." : "이 컴포넌트는 화면에서 편집할 수 없어 상태를 찾지 않습니다." }),
+      S.states.length ? row : el("span", { class: "tl-empty", tabindex: "0", text: "없음", "data-tip": S.editable ? "상태 없음\nCSS에 상태 규칙(:hover, [aria-pressed] 등)이 없습니다." : "상태 없음\n이 컴포넌트는 화면에서 편집할 수 없어 상태를 찾지 않습니다." }),
       S.states.length ? el("span", { class: "tl-scope", text: S.stateKey === "normal" ? `${S.states.length}개 상태` : `${scope}에 걸림 · 저장 안 됨` }) : null),
     frameRow(),
   );
@@ -376,14 +383,14 @@ function renderTimeline() {
 function frameRow() {
   const r = el("div", { class: "tl-row tl-frames-row" }, el("span", { class: "tl-label", text: "프레임" }));
   if (!S.anim.length) {
-    r.append(el("span", { class: "tl-empty", text: doc ? "지금 상태에는 CSS 애니메이션(@keyframes)이 없습니다." : "" }));
+    if (doc) r.append(el("span", { class: "tl-empty", tabindex: "0", text: "없음", "data-tip": "프레임 없음\n지금 상태에는 CSS 애니메이션(@keyframes)이 없습니다." }));
     return r;
   }
   const { times, clipped, total } = animTimes();
   const fps = animFps();
   const cells = el("div", { class: "tl-frames", role: "group", "aria-label": "애니메이션 프레임" });
   times.forEach((tm, i) => cells.append(el("button", { type: "button", class: "tl-frame" + (i % 5 === 4 ? " is-fifth" : ""), "data-i": String(i),
-    title: `${i + 1}프레임 · ${Math.round(tm)}ms`, "aria-label": `${i + 1}프레임`, onclick: () => seekFrame(i) }, i === 0 || i % 5 === 4 ? el("span", { text: String(i + 1) }) : null)));
+    "data-tip": `${i + 1}프레임\n${Math.round(tm)}ms`, "aria-label": `${i + 1}프레임`, onclick: () => seekFrame(i) }, i === 0 || i % 5 === 4 ? el("span", { text: String(i + 1) }) : null)));
   // 끌어서 훑기(플래시 재생헤드처럼): 누른 채 좌우로 움직이면 지나가는 칸 시각으로 멈춤. 줄 끝에 닿으면 저절로 스크롤
   cells.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
@@ -418,7 +425,7 @@ function frameRow() {
   const fpsSel = el("select", { class: "tl-fps", "aria-label": "초당 프레임" }, ...FPS_CHOICES.map((v) => { const o = el("option", { value: String(v), text: `${v}fps` }); if (v === fps) o.selected = true; return o; }));
   fpsSel.addEventListener("change", () => { exp?.setAnimationFps(Number(fpsSel.value)); S.frame = 0; refreshAnim(); });
   r.append(
-    el("button", { type: "button", class: "tl-play", "aria-pressed": String(S.playing), title: S.playing ? "멈추고 지금 칸 보기" : "재생", onclick: togglePlay, text: S.playing ? "❚❚" : "▶" }),
+    el("button", { type: "button", class: "tl-play", "aria-pressed": String(S.playing), "aria-label": S.playing ? "멈춤" : "재생", "data-tip": S.playing ? "멈춤\n멈추고 지금 칸을 봅니다." : "재생", onclick: togglePlay }, uiIcon(S.playing ? "pause" : "play")),
     cells,
     el("span", { class: "tl-scope tl-frame-info" }, el("output", { class: "tl-frame-no" }), ` · ${S.anim.names.slice(0, 3).join(", ")} · ${Math.round(S.anim.length)}ms${clipped ? ` (앞 ${times.length}/${total}칸)` : ""} · `, fpsSel),
   );
@@ -742,7 +749,7 @@ function renderTree() {
     const row = document.createElement("div"); row.className = "tree-row";
     const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "tree-toggle";
     if (children.length) {
-      toggle.textContent = collapsed.has(path) ? "▸" : "▾";
+      toggle.replaceChildren(uiIcon(collapsed.has(path) ? "chevron-right" : "chevron-down"));
       toggle.setAttribute("aria-label", `${label(node)} 하위 요소 ${collapsed.has(path) ? "펼치기" : "접기"}`);
       toggle.onclick = () => {
         collapsed.has(path) ? collapsed.delete(path) : collapsed.add(path);
@@ -941,25 +948,25 @@ function renderPanel() {
             el("div", { class: "bm-c", text: `${fmt(bx.r.width - bx.b[1] - bx.b[3] - bx.p[1] - bx.p[3])} × ${fmt(bx.r.height - bx.b[0] - bx.b[2] - bx.p[0] - bx.p[2])}` }))))));
   }
 
-  if (!S.editable) { root.append(el("p", { class: "note", text: "이 컴포넌트는 화면에서 편집할 수 없습니다(위 안내 참고)." })); return; }
+  if (!S.editable) { root.append(el("p", { class: "note-chip", tabindex: "0", "data-tip": "편집 불가\n스크립트가 <style>을 더하거나 바꾸는 컴포넌트라 화면에서 고칠 수 없습니다. 고칠 내용은 에이전트에게 말로 요청하세요." }, uiIcon("lock"), "편집 불가")); return; }
 
   // 이 요소가 쓰는 토큰
   const used = new Set();
   for (const m of matches) if (!m.state) for (const d of m.rule.decls) if (!d.disabled) for (const v of varRefs(d.value)) used.add(v);
   if (used.size) {
-    root.append(el("h3", { class: "sect", text: "이 요소가 쓰는 토큰 — 여기서 바꾸면 그 토큰을 쓰는 곳이 모두 바뀝니다" }));
+    root.append(sectHead("토큰", "token", "토큰\n이 요소가 쓰는 CSS 변수입니다. 여기서 바꾸면 그 토큰을 쓰는 곳이 모두 바뀝니다."));
     const box = el("div", { class: "rule" });
     const list = el("ul", { class: "decls" });
     for (const name of used) {
       const def = defs.get(name);
-      if (!def) { list.append(el("li", { class: "note", text: `${name}: 정의를 찾지 못함` })); continue; }
+      if (!def) { list.append(el("li", { class: "note", "data-tip": `${name}\n이 컴포넌트의 CSS에서 정의를 찾지 못했습니다.`, text: `${name} · 정의 없음` })); continue; }
       const uses = countVarUses(S.styles, name);
       list.append(declRow(def.bi, def.rule.index, def.di, def.decl, { extraText: `${uses}곳에서 씀 · ${def.rule.selector} · ${lineOf(S.styles[def.bi], def.decl.start)}행` }));
     }
     box.append(list); root.append(box);
   }
 
-  root.append(el("h3", { class: "sect", text: matches.length ? "걸린 규칙 — 위쪽이 우선" : "이 요소에 걸린 규칙이 없습니다" }));
+  root.append(sectHead(matches.length ? "걸린 규칙" : "걸린 규칙 없음", "rules", matches.length ? "걸린 규칙\n이 요소에 걸린 CSS 규칙입니다. 위쪽이 우선합니다.\n줄 앞 체크를 끄면 /* 주석 */으로 남습니다." : "걸린 규칙 없음\n이 요소에 걸린 CSS 규칙이 없습니다."));
   for (const m of matches) {
     const parts = splitSelectors(m.rule.selector);
     const sel = el("span", { class: "sel" });
@@ -976,26 +983,28 @@ function renderPanel() {
     const list = el("ul", { class: "decls" });
     m.rule.decls.forEach((d, di) => list.append(declRow(m.bi, m.rule.index, di, d, { over: over.has(`${m.bi}:${m.rule.index}:${di}`), cs })));
     card.append(list);
-    card.append(el("button", { type: "button", class: "add", text: "+ 속성 추가", onclick: (e) => {
+    card.append(el("button", { type: "button", class: "add", "data-tip": "속성 추가\n이 규칙에 CSS 속성을 더합니다.", onclick: (e) => {
       const row = declRow(m.bi, m.rule.index, -1, { name: "", value: "", disabled: false }, {});
       list.append(row); row.querySelector(".nm").focus(); e.currentTarget.hidden = true;
-    } }));
+    } }, uiIcon("plus"), "속성 추가"));
     root.append(card);
   }
 
   if (target.hasAttribute("style")) {
-    root.append(el("p", { class: "note", text: `이 요소에는 style 속성이 있습니다: ${target.getAttribute("style")} — style 속성은 화면에서 고치지 않습니다. 필요하면 에이전트에게 말로 요청하세요.` }));
+    root.append(el("p", { class: "note-chip", tabindex: "0", "data-tip": `style 속성\n${target.getAttribute("style")}\nstyle 속성은 화면에서 고치지 않습니다. 필요하면 에이전트에게 말로 요청하세요.` }, uiIcon("info"), "style 속성 있음"));
   }
 
   if (keep) { const k = root.querySelector(`[data-key="${CSS.escape(keep)}"]`); if (k) { k.focus(); if (k.setSelectionRange) k.setSelectionRange(k.value.length, k.value.length); } }
 }
+/** 스타일 탭 구역 머리: 아이콘 + 짧은 이름, 설명은 툴팁 */
+function sectHead(title, ic, tip) { return el("h3", { class: "sect pane-head", tabindex: tip ? "0" : null, "data-tip": tip || null }, uiIcon(ic), el("span", { text: title })); }
 const fmt = (n) => { const r = Math.round(n * 10) / 10; return r === 0 ? "–" : String(r); };
 
 /** 선언 한 줄. di가 -1이면 새로 더하는 줄 */
 function declRow(bi, ri, di, decl, { over = false, cs = null, extraText = "" }) {
   const keyBase = `${bi}:${ri}:${di}`;
   const li = el("li", { class: `decl${decl.disabled ? " off" : ""}${over ? " over" : ""}` });
-  const cb = el("input", { type: "checkbox", "aria-label": `${decl.name || "새 속성"} 켜기/끄기`, title: "끄면 /* 주석 */으로 남습니다" });
+  const cb = el("input", { type: "checkbox", "aria-label": `${decl.name || "새 속성"} 켜기/끄기`, "data-tip": "켜기/끄기\n끄면 /* 주석 */으로 남습니다." });
   cb.checked = !decl.disabled; cb.disabled = di < 0;
   const nm = el("input", { type: "text", class: "nm", spellcheck: "false", autocomplete: "off", "aria-label": "속성 이름", "data-key": keyBase + ":n", placeholder: "속성" });
   const vl = el("input", { type: "text", class: "vl", spellcheck: "false", autocomplete: "off", "aria-label": `${decl.name || "새 속성"} 값`, "data-key": keyBase + ":v", placeholder: "값" });
@@ -1012,7 +1021,7 @@ function declRow(bi, ri, di, decl, { over = false, cs = null, extraText = "" }) 
   }
   if (cs && !decl.disabled && !over && decl.name && !decl.name.startsWith("--") && /var\(|calc\(|%|em\b|rem\b|vw|vh|clamp\(|min\(|max\(/.test(decl.value)) {
     const comp = cs.getPropertyValue(decl.name).trim();
-    if (comp) extra.append(el("span", { text: `계산값 ${comp}` }));
+    if (comp) extra.append(el("span", { class: "clip", "data-tip": `계산값\n${comp.length > 600 ? comp.slice(0, 600) + "…" : comp}`, text: `계산값 ${comp}` }));
   }
   if (cs && /color|background/.test(decl.name) && !decl.disabled) {
     const comp = decl.name.startsWith("--") ? "" : cs.getPropertyValue(decl.name.replace(/^background$/, "background-color")).trim();
@@ -1187,10 +1196,156 @@ function onKey(e) {
   else if (e.key === "Escape" && !typing && S.selected) { S.selected = null; S.selPath = null; needDraw = true; renderTree(); renderPanel(); }
 }
 document.addEventListener("keydown", onKey);
+
+// ---------- 메뉴 바 ----------
+// 메뉴·단축키·버튼·오른쪽 클릭이 같은 함수를 부른다. 메뉴는 열 때마다 지금 상태(선택·저장 여부·상태 목록)를 다시 읽는다.
+const LIB = { folders: [], atlases: [], history: [] };
+async function refreshLibInfo() {
+  const get = async (url) => { try { const r = await fetch(url, { cache: "no-store", headers: TOKEN ? { "x-webd-token": TOKEN } : {} }); return r.ok ? r.json() : null; } catch { return null; } };
+  const [h, f, a] = await Promise.all([api("/history").then((r) => (r.ok ? r.json() : null)).catch(() => null), $("back").hidden ? null : get("/folders"), $("back").hidden ? null : get("/atlas/")]);
+  LIB.history = h?.versions || []; LIB.folders = f?.folders || []; LIB.atlases = a?.atlases || [];
+}
+async function postJson(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json", ...(TOKEN ? { "x-webd-token": TOKEN } : {}) }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || `실패 (${r.status})`);
+  return j;
+}
+/** "…으로/로": 받침이 없거나 ㄹ이면 "로"(folders.mjs의 ro와 같음) */
+function josaRo(word) {
+  const c = String(word).trim().slice(-1).charCodeAt(0);
+  if (!(c >= 0xac00 && c <= 0xd7a3)) return "(으)로";
+  const j = (c - 0xac00) % 28; return j === 0 || j === 8 ? "로" : "으로";
+}
+const selLive = () => (S.selected && S.selected.isConnected && S.selected !== doc?.body ? S.selected : null);
+function copyText(text, msg) { navigator.clipboard?.writeText(text).then(() => flash(msg), () => flash("복사하지 못했습니다.")); }
+/** 고른 요소에 걸린 CSS 규칙(켜진 선언만)을 글로 */
+function selectedCssText() {
+  const t = selLive(); if (!t) return "";
+  const parsed = S.styles.map((x) => parseCss(x));
+  return matchedRules(t, parsed).map((m) => `${m.state ? `/* ${m.state} 상태 */\n` : ""}${m.rule.selector} {\n${m.rule.decls.filter((d) => !d.disabled).map((d) => `  ${d.name}: ${d.value};`).join("\n")}\n}`).join("\n\n");
+}
+async function duplicatePreset() {
+  let html; try { html = currentHtml(); } catch (e) { flash(e.message); return; }
+  try {
+    const j = await postJson(`/api/${encodeURIComponent(ID)}/duplicate`, { html });
+    flash(`새 프리셋을 만들었습니다: ${j.meta.name}`);
+    window.open(`/edit/${encodeURIComponent(j.meta.id)}`, "_blank", "noopener");
+  } catch (e) { banner(`복제하지 못했습니다: ${e.message}`); }
+}
+async function restoreVersion(v) {
+  const lost = isDirty() ? "\n저장하지 않은 화면 변경은 사라집니다." : "";
+  if (!confirm(`${v.at} 버전으로 되돌릴까요?\n지금 파일은 이전 버전 기록에 남으므로 다시 되돌릴 수 있습니다.${lost}`)) return;
+  try {
+    await postJson(`/api/${encodeURIComponent(ID)}/restore`, { file: v.file });
+    await discardAndReload(); await refreshLibInfo();
+    flash(`${v.at} 버전으로 되돌렸습니다.`);
+  } catch (e) { banner(`되돌리지 못했습니다: ${e.message}`); }
+}
+async function moveToFolder(folder) {
+  try {
+    await postJson("/folders/move", { ids: [ID], folder });
+    S.meta = { ...S.meta, folder }; flash(`${folder || "폴더 없음"}${josaRo(folder || "폴더 없음")} 옮겼습니다.`);
+  } catch (e) { flash(e.message); }
+}
+async function addToAtlas(a) {
+  if (a.members.includes(ID)) { flash(`이미 ‘${a.name}’에 들어 있습니다.`); return; }
+  try {
+    await postJson(`/atlas/${encodeURIComponent(a.name)}`, { atlas: { ...a, members: [...a.members, ID] } });
+    await refreshLibInfo(); flash(`‘${a.name}’ 묶음 시트에 넣었습니다.`);
+  } catch (e) { flash(e.message); }
+}
+function showHelp() {
+  let dlg = $("help");
+  if (!dlg) {
+    const rows = [["Ctrl+S", "저장"], ["Ctrl+Z · Ctrl+Shift+Z", "되돌리기 · 다시 실행"], ["Ctrl+E", "지금 설정으로 내보내기"], ["V", "요소 선택 켜기·끄기"],
+      ["Ctrl+C · Ctrl+X · Ctrl+V", "요소 복사 · 잘라내기 · 붙여넣기(Shift: 자식으로)"], ["Ctrl+D · Delete · F2", "복제 · 삭제 · 이름 바꾸기"], ["Ctrl+Shift+G", "빈 부모 만들기"],
+      ["Esc", "선택 해제"], ["F10 · Alt", "메뉴 바로 이동"]];
+    dlg = el("dialog", { id: "help", class: "help", "aria-labelledby": "help-title" },
+      el("h2", { id: "help-title" }, uiIcon("info"), "단축키"),
+      el("dl", {}, ...rows.flatMap(([k, t]) => [el("dt", {}, el("kbd", { text: k })), el("dd", { text: t })])),
+      el("form", { method: "dialog" }, el("button", { class: "ui-control", text: "닫기" })));
+    document.body.append(dlg);
+  }
+  dlg.showModal();
+}
+const inLibrary = () => !$("back").hidden;
+const EDITOR_MENUS = [
+  { label: "파일", items: () => [
+    { label: "저장", icon: "save", key: "Ctrl+S", disabled: !isDirty() || !S.editable, run: () => save() },
+    { label: "복제해서 새 프리셋으로", icon: "plus", disabled: !inLibrary(), tip: "복제해서 새 프리셋으로\n지금 화면 내용(저장 안 한 변경 포함)으로 새 프리셋을 만들어 새 탭에서 엽니다. 폴더·종류·태그·내보내기 설정을 따라갑니다.", run: duplicatePreset },
+    { label: "이전 버전", icon: "undo", disabled: !LIB.history.length, sub: () => LIB.history.map((v) => ({ label: v.at, tip: `${v.at} 버전으로 되돌리기\n새 버전으로 다시 저장합니다.`, run: () => restoreVersion(v) })) },
+    { label: "폴더로 옮기기", icon: "folder-move", disabled: !inLibrary(), sub: () => [{ label: "폴더 없음", icon: "inbox", checked: !S.meta?.folder, run: () => moveToFolder("") }, ...LIB.folders.map((f) => ({ label: "　".repeat(f.split("/").length - 1) + f.split("/").pop(), checked: S.meta?.folder === f, tip: f, run: () => moveToFolder(f) }))] },
+    null,
+    { label: "원본 새 탭에서 열기", icon: "external", run: () => window.open(`/lib/${encodeURIComponent(ID)}/component.html`, "_blank", "noopener") },
+    { label: "라이브러리로", icon: "arrow-left", disabled: !inLibrary(), run: () => { location.href = "/lib/"; } },
+  ] },
+  { label: "편집", items: () => {
+    const sel = selLive(), can = S.struct.ok, clip = readClip();
+    return [
+      { label: "되돌리기", icon: "undo", key: "Ctrl+Z", disabled: !S.undo.length, run: undo },
+      { label: "다시 실행", icon: "redo", key: "Ctrl+Shift+Z", disabled: !S.redo.length, run: redo },
+      null,
+      { label: "잘라내기", key: "Ctrl+X", disabled: !sel || !can, run: () => copySelected(true) },
+      { label: "복사", key: "Ctrl+C", disabled: !sel, run: () => copySelected(false) },
+      { label: "붙여넣기", key: "Ctrl+V", disabled: !clip?.html || !can, run: () => paste(false) },
+      { label: "자식으로 붙여넣기", key: "Ctrl+Shift+V", disabled: !clip?.html || !can, run: () => paste(true) },
+      { label: "복제", key: "Ctrl+D", disabled: !sel || !can, run: duplicateSelected },
+      { label: "삭제", key: "Delete", disabled: !sel || !can, run: deleteSelected },
+      null,
+      { label: "요소 만들기", icon: "plus", disabled: !can, sub: () => Object.entries(CREATE).map(([k, d]) => ({ label: sel ? `자식 ${d.label}` : d.label, run: () => createElement(k, sel ? S.selPath : null) })) },
+      { label: "빈 부모 만들기", key: "Ctrl+Shift+G", disabled: !sel || !can, run: wrapInParent },
+      { label: "이름 바꾸기", icon: "edit", key: "F2", disabled: !sel || !can, run: () => startRename(S.selPath) },
+      null,
+      { label: "요소 이름 복사", icon: "hash", disabled: !sel, tip: "요소 이름 복사\n고른 요소의 태그·id·클래스(예: span.ash-slot__rim)를 복사합니다.", run: () => copyText(label(sel), `복사함: ${label(sel)}`) },
+      { label: "요소 CSS 복사", icon: "code", disabled: !sel, tip: "요소 CSS 복사\n고른 요소에 걸린 규칙과 켜진 속성을 글로 복사합니다(AI에게 물어볼 때 붙여 넣기 좋게).", run: () => copyText(`/* ${label(sel)} */\n${selectedCssText()}`, `CSS를 복사했습니다: ${label(sel)}`) },
+    ];
+  } },
+  { label: "보기", items: () => [
+    { label: "요소 선택", icon: "pick", key: "V", checked: S.pick, run: () => $("pick").click() },
+    { label: "전체 간격 보기", icon: "spacing", checked: S.all, run: () => $("all").click() },
+    { label: "미리보기 폭", icon: "viewport", sub: () => [...$("vp").options].map((o) => ({ label: o.textContent, checked: $("vp").value === o.value, run: () => { $("vp").value = o.value; $("vp").dispatchEvent(new Event("change")); } })) },
+    null,
+    { label: "스타일 탭", icon: "rules", checked: currentTab === "rules", run: () => showTab("rules") },
+    { label: "CSS 원문 탭", icon: "code", checked: currentTab === "css", run: () => showTab("css") },
+    { label: "내보내기 탭", icon: "download", checked: currentTab === "export", run: () => showTab("export") },
+  ] },
+  { label: "상태", items: () => {
+    const times = animTimes().times, has = S.anim.length > 0;
+    return [
+      { label: "기본", icon: "state-base", checked: S.stateKey === "normal", run: () => setPreviewState("normal") },
+      ...S.states.map((s) => ({ label: s.label, checked: S.stateKey === s.key, tip: `${s.label}\n미리보기에만 걸고 저장하지 않습니다.`, run: () => setPreviewState(s.key) })),
+      null,
+      { label: S.playing ? "멈춤" : "재생", icon: S.playing ? "pause" : "play", disabled: !has, run: togglePlay },
+      { label: "이전 프레임", disabled: !has, run: () => seekFrame(((S.playing ? currentFrame() : S.frame) - 1 + times.length) % times.length) },
+      { label: "다음 프레임", disabled: !has, run: () => seekFrame(((S.playing ? currentFrame() : S.frame) + 1) % times.length) },
+      { label: "초당 프레임", icon: "film", disabled: !exp?.ready(), sub: () => FPS_CHOICES.map((v) => ({ label: `${v} fps`, checked: animFps() === v, run: () => { exp.setAnimationFps(v); S.frame = 0; refreshAnim(); } })) },
+    ];
+  } },
+  { label: "내보내기", items: () => [
+    { label: "지금 설정으로 내보내기", icon: "download", key: "Ctrl+E", disabled: !exp?.ready(), tip: "지금 설정으로 내보내기\n내보내기 탭의 설정대로 PNG·JSON을 씁니다. 저장하지 않은 CSS 변경도 화면 그대로 내보냅니다.", run: () => { showTab("export"); exp.exportNow(); } },
+    { label: "내보내기 설정 열기", icon: "rules", run: () => showTab("export") },
+    { label: "배율", icon: "scale-2", disabled: !exp?.ready(), sub: () => [1, 2, 3, 4].map((s) => ({ label: `${s}x`, icon: `scale-${s}`, checked: exp.scale() === s, run: () => exp.setScale(s) })) },
+    { label: "내보낸 폴더 열기", icon: "folder-open", disabled: !exp?.hasExport(), run: () => exp.reveal() },
+    null,
+    { label: "묶음 시트에 넣기", icon: "layers", disabled: !inLibrary() || !LIB.atlases.length, tip: "묶음 시트에 넣기\n저장한 묶음 시트에 이 프리셋을 더합니다. 새 묶음 시트는 라이브러리 목록의 내보내기 메뉴에서 만듭니다.", sub: () => LIB.atlases.map((a) => ({ label: `${a.name} · ${a.members.length}개`, checked: a.members.includes(ID), run: () => addToAtlas(a) })) },
+  ] },
+  { label: "도움말", items: () => [{ label: "단축키", icon: "info", run: showHelp }] },
+];
+if ($("menubar")) createMenubar($("menubar"), EDITOR_MENUS, { icon: uiIcon });
+document.addEventListener("keydown", (e) => {
+  const t = document.activeElement;
+  if (isTextField(t) || t?.tagName === "SELECT" || document.querySelector(".mb-menu, .ctx-menu, dialog[open]")) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "e") { e.preventDefault(); if (exp?.ready()) { showTab("export"); exp.exportNow(); } }
+  else if (!mod && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "v") { e.preventDefault(); $("pick").click(); }
+});
+initTooltips();
+for (const n of document.querySelectorAll("[data-icon]")) n.prepend(uiIcon(n.dataset.icon));
 addEventListener("beforeunload", (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ""; } });
 
 if (!ID) banner("주소에 편집할 항목이 없습니다. library.mjs open으로 연 목록에서 카드를 고르세요.");
 else {
-  load().then(() => { if (location.hash === "#export") showTab("export"); });
+  load().then(() => { if (location.hash === "#export") showTab("export"); refreshLibInfo(); });
   listen();
 }

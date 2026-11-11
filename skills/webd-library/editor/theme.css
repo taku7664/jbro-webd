@@ -37,3 +37,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .ui-chrome-control:not(:disabled):hover { border-color: var(--chrome-control-hover-line); background: var(--chrome-control-hover); }
 .ui-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
 .ui-primary:hover { filter: brightness(1.08); }
+/* 아이콘(icons.mjs)과 툴팁(tooltip.mjs): 설명은 화면에 늘어놓지 않고 툴팁으로만 */
+.ic { display: inline-flex; flex: 0 0 auto; line-height: 0; }
+.ic svg { display: block; }
+.ui-tip { position: fixed; z-index: 1000; max-width: 300px; padding: 8px 11px 9px; border-radius: 6px; pointer-events: none;
+          background: var(--text); color: var(--panel); font: 12px/1.5 var(--font); white-space: pre-line; word-break: keep-all;
+          box-shadow: 0 6px 20px rgba(0,0,0,.22), 0 1px 3px rgba(0,0,0,.18); }
+.ui-tip[hidden] { display: none; }
+.ui-tip strong { display: block; font-weight: 700; }
+.ui-tip span { display: block; margin-top: 2px; opacity: .82; }
+[data-tip] { -webkit-touch-callout: none; }

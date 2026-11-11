@@ -263,12 +263,13 @@ test("neutralDoc: <base>와 덮어쓰기 스타일을 head에 넣고, 원래 HTM
   assert.match(neutralDoc("<p>no head</p>", "./z/"), /^<base href="\.\/z\/"><p>no head<\/p><style id="webd-neutral-bg">/);
 });
 
-test("index.html: 배경 전환 UI와 중립 문서 함수가 들어간다", () => {
+test("index.html: 배경 전환(보기 메뉴)과 중립 문서 함수가 들어간다", () => {
   const lib = freshLib();
   save(lib, { file: part("<style>body{background:#DCC9A6}</style><p>a</p>"), name: "Toggle" });
   const out = readFileSync(writeIndex(lib), "utf8");
-  assert.match(out, /id="bgswitch"/);
-  assert.match(out, /value="original" checked/);
+  assert.match(out, /id="menubar"/);
+  assert.match(out, /label: "미리보기 배경"/, "배경 전환은 보기 메뉴로 옮김");
+  assert.match(out, /function setBg\(/);
   assert.match(out, /webd-library-bg/);
   assert.match(out, /const neutralDoc = function neutralDoc\(/);
   assert.match(out, /library\.mjs\\" edit /, "편집 버튼이 복사할 명령");

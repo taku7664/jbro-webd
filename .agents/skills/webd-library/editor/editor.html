@@ -5,24 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>컴포넌트 CSS 편집</title>
 <link rel="stylesheet" href="/assets/theme.css">
+<link rel="stylesheet" href="/assets/menubar.css">
 <link rel="stylesheet" href="/assets/editor.css">
 </head>
 <body>
+<div class="appbar"><nav id="menubar" aria-label="메뉴"></nav></div>
 <header class="top ui-top">
-  <a id="back" class="back ui-chrome-control" href="/lib/" hidden>← 라이브러리</a>
+  <a id="back" class="back ui-chrome-control" href="/lib/" data-icon="arrow-left" data-tip="라이브러리&#10;목록으로 돌아갑니다." hidden>라이브러리</a>
   <div class="title">
     <h1 id="name" class="ui-title">불러오는 중…</h1>
     <p class="sub ui-meta"><code id="cid"></code> · <span id="ver"></span></p>
   </div>
   <div class="tools" role="toolbar" aria-label="편집 도구">
-    <label class="field">미리보기 폭<select id="vp" class="ui-chrome-control"></select></label>
-    <button type="button" id="pick" class="toggle ui-chrome-control" aria-pressed="false" title="켜면 미리보기에서 편집할 요소를 고르고, 끄면 컴포넌트를 직접 조작합니다">요소 선택</button>
-    <button type="button" id="all" class="toggle ui-chrome-control" aria-pressed="false" title="모든 요소의 margin·padding 영역을 한꺼번에 보여 줍니다">전체 간격 보기</button>
+    <label class="field" hidden data-icon="viewport" data-tip="미리보기 폭&#10;미리보기 화면의 너비를 바꿉니다. 저장되는 컴포넌트에는 영향이 없습니다."><span class="sr">미리보기 폭</span><select id="vp" class="ui-chrome-control"></select></label>
+    <button type="button" id="pick" class="toggle ui-chrome-control" aria-pressed="false" data-icon="pick" data-tip="요소 선택 (V)&#10;켜면 미리보기에서 클릭해 편집할 요소를 고릅니다. 끄면 컴포넌트를 직접 조작합니다.">요소 선택</button>
+    <button type="button" id="all" class="toggle ui-chrome-control" hidden aria-pressed="false" data-icon="spacing" data-tip="전체 간격 보기&#10;모든 요소의 margin·padding 영역을 한꺼번에 보여 줍니다.">전체 간격</button>
     <span class="sep" aria-hidden="true"></span>
-    <button type="button" id="undo" class="ui-chrome-control" title="되돌리기 (Ctrl+Z)">되돌리기</button>
-    <button type="button" id="redo" class="ui-chrome-control" title="다시 실행 (Ctrl+Shift+Z)">다시 실행</button>
+    <button type="button" id="undo" class="ui-chrome-control icon-only" aria-label="되돌리기" data-icon="undo" data-tip="되돌리기&#10;Ctrl+Z"></button>
+    <button type="button" id="redo" class="ui-chrome-control icon-only" aria-label="다시 실행" data-icon="redo" data-tip="다시 실행&#10;Ctrl+Shift+Z"></button>
     <span id="state" class="state" aria-live="polite">저장됨</span>
-    <button type="button" id="save" class="primary ui-primary" title="저장 (Ctrl+S)" disabled>저장</button>
+    <button type="button" id="save" class="primary ui-primary" data-icon="save" data-tip="저장&#10;Ctrl+S · 새 버전으로 저장하고 이전 파일은 history/에 남습니다." disabled>저장</button>
   </div>
 </header>
 
@@ -35,14 +37,14 @@
     <button type="button" data-view="style" aria-pressed="false">스타일</button>
   </nav>
   <aside class="tree-panel" aria-label="HTML 요소 트리">
-    <div class="tree-heading"><button type="button" id="tree-add" class="tree-add" title="만들기·붙여넣기 (오른쪽 클릭과 같은 메뉴)" aria-label="요소 만들기" aria-haspopup="menu">+</button><h2>계층</h2><span id="tree-count"></span></div>
+    <div class="tree-heading"><button type="button" id="tree-add" class="tree-add" data-icon="plus" data-tip="요소 만들기&#10;만들기·붙여넣기 메뉴를 엽니다(오른쪽 클릭과 같은 메뉴)." aria-label="요소 만들기" aria-haspopup="menu"></button><h2>계층</h2><span id="tree-count"></span></div>
     <div id="tree" class="tree-scroll" role="tree" aria-label="컴포넌트 본문 요소"></div>
   </aside>
   <section class="stage-wrap" aria-label="미리보기">
     <div class="legend" aria-hidden="true">
       <span class="stage-caption"><span id="preview-bg">원래 배경</span> · <output id="preview-size"></output></span>
       <span class="lg-box"><i class="lg-m"></i>margin</span><span class="lg-box"><i class="lg-b"></i>border</span><span class="lg-box"><i class="lg-p"></i>padding</span><span class="lg-box"><i class="lg-c"></i>content</span>
-      <span class="lg-xp"><i class="lg-target"></i>내보낼 범위</span><span class="lg-xp"><i class="lg-guide"></i>인셋(끌어서 조절)</span>
+      <span class="lg-xp" data-tip="범위&#10;점선 상자가 내보낼 범위입니다."><i class="lg-target"></i>범위</span><span class="lg-xp" data-tip="인셋&#10;9·3-slice 안내선입니다. 끌어서 조절합니다."><i class="lg-guide"></i>인셋</span>
     </div>
     <div class="timeline" id="timeline" aria-label="타임라인"></div>
     <div class="stage" id="stage">
@@ -56,17 +58,16 @@
 
   <aside class="panel" aria-label="스타일">
     <div class="tabs" role="tablist">
-      <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules">스타일</button>
-      <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css">CSS 원문</button>
-      <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export" title="게임용 PNG + 좌표 JSON(Aseprite 호환, Unity·Godot 값). 설정을 바꾸면 결과가 다시 렌더됩니다.">내보내기</button>
+      <button type="button" role="tab" id="tab-rules" aria-selected="true" aria-controls="pane-rules" data-icon="rules" data-tip="스타일&#10;고른 요소에 걸린 CSS 규칙을 보고 고칩니다. 값을 고치면 바로 반영되고, 저장해야 파일에 남습니다.">스타일</button>
+      <button type="button" role="tab" id="tab-css" aria-selected="false" aria-controls="pane-css" data-icon="code" data-tip="CSS 원문&#10;컴포넌트의 &lt;style&gt; 원문입니다. 고치는 대로 미리보기에 반영됩니다.">CSS 원문</button>
+      <button type="button" role="tab" id="tab-export" aria-selected="false" aria-controls="pane-export" data-icon="download" data-tip="내보내기&#10;게임용 PNG + 좌표 JSON(Aseprite 호환, Unity·Godot 값)을 씁니다.&#10;설정을 바꾸면 결과가 다시 렌더됩니다.">내보내기</button>
     </div>
     <div class="pane" id="pane-rules" role="tabpanel" aria-labelledby="tab-rules">
-      <p class="hint" id="hint">왼쪽 HTML 요소 트리에서 대상을 고르거나, 상단의 ‘요소 선택’을 켜고 미리보기에서 고르세요. 값을 고치면 바로 반영되고, 저장해야 파일에 남습니다.</p>
+      <div class="pane-empty" id="hint" data-icon="pick" tabindex="0" data-tip="선택한 요소 없음&#10;왼쪽 계층에서 고르거나, 상단의 ‘요소 선택’을 켜고 미리보기에서 클릭하세요.">선택한 요소 없음</div>
       <div id="rules"></div>
     </div>
     <div class="pane" id="pane-css" role="tabpanel" aria-labelledby="tab-css" hidden>
-      <p class="hint">컴포넌트의 &lt;style&gt; 원문입니다. 고치는 대로 미리보기에 반영됩니다.</p>
-      <div id="blocks"></div>
+            <div id="blocks"></div>
     </div>
     <div class="pane xp-pane" id="pane-export" role="tabpanel" aria-labelledby="tab-export" hidden></div>
   </aside>

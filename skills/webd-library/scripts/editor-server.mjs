@@ -29,6 +29,16 @@
 //   POST /api/<id>/export-spec     { spec } → <id>/export.json 저장
 //   POST /api/<id>/export          { spec, html?, write } → write면 폴더에 PNG·JSON을 쓰고, 아니면 미리보기(data URL)만
 //   POST /api/<id>/reveal          내보낸 폴더를 파일 탐색기로 연다
+//   GET  /api/<id>/history         이전 버전 목록 { versions: [{ file, at, bytes }] } (새것부터)
+//   POST /api/<id>/restore         { file } 그 버전을 새 버전으로 다시 저장(지금 파일은 history에 남음)
+//   POST /api/<id>/duplicate       { html?, name? } 새 프리셋으로 복제(폴더·종류·태그·내보내기 설정 따라감, 라이브러리 모드만)
+//   POST /items/remove             { ids } 휴지통(<라이브러리>/.trash/)으로 옮기기(라이브러리 모드만)
+//   GET  /folders                  가상 폴더 트리 { folders, counts, direct, unfiled, total, suggestions }
+//   POST /folders/add              { path } 빈 폴더 만들기
+//   POST /folders/rename           { from, to } 폴더 이름 바꾸기·옮기기(안의 프리셋 경로도 함께)
+//   POST /folders/remove           { path } 폴더 지우기(안의 프리셋·하위 폴더는 한 단계 위로)
+//   POST /folders/move             { ids, folder } 프리셋을 폴더로 옮기기(folder ""는 폴더 없음)
+//   POST /folders/suggest          이름이 태그로 시작하는 폴더 없는 프리셋을 그 태그 폴더로 옮기기
 //   GET  /atlas/                   묶음 시트 목록 { atlases, maxSizes }  (라이브러리 모드만)
 //   POST /atlas/<이름>             { atlas } → <라이브러리>/.atlases/<이름>.json 저장
 //   POST /atlas/<이름>/remove      묶음 정의 지우기(내보낸 파일은 그대로)
@@ -36,13 +46,14 @@
 //   POST /atlas/<이름>/reveal      묶음 출력 폴더 열기
 
 import { createServer } from "node:http";
-import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, watch, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdtempSync, rmSync, watch, statSync, readdirSync } from "node:fs";
 import { join, dirname, normalize, extname, sep } from "node:path";
 import { tmpdir, networkInterfaces } from "node:os";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
-import { save, loadEntries, detectBackground, CATEGORIES, localIso } from "./library.mjs";
+import { save, remove, loadEntries, detectBackground, CATEGORIES, localIso, writeIndex } from "./library.mjs";
+import { folderTree, suggestFolders, addFolder, renameFolder, removeFolder, moveItems, applySuggestions } from "./folders.mjs";
 import { renderGallery } from "./gallery.mjs";
 import { normalizeSpec, defaultSpec, outputDir, defaultExportRoot } from "./export/spec.mjs";
 
@@ -167,6 +178,43 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
         if (rest.some((p) => p.startsWith("."))) return send(res, 404, "없음");
         return sendInside(res, join(lib, id), rest.join("/"));
       }
+      if (parts[0] === "items" && parts[1] === "remove" && parts.length === 2) {
+        // 휴지통으로(라이브러리 모드만): <라이브러리>/.trash/로 옮긴다. 바로 지우지 않는다.
+        if (only) return send(res, 404, "이 서버는 항목 하나만 엽니다.");
+        if (!authed()) return send(res, 403, "토큰이 없거나 다릅니다.");
+        if (req.method !== "POST") return send(res, 404, "없음");
+        const origin = req.headers.origin;
+        if (origin && !okHosts.some((h) => origin === `http://${h}`)) return send(res, 403, "다른 출처");
+        const body = (await readJson(req)) ?? {};
+        const ids = Array.isArray(body.ids) ? body.ids.map(String) : [];
+        if (!ids.length) return json(res, 400, { error: "지울 프리셋이 없습니다." });
+        if (ids.some((x) => !x || x.startsWith(".") || /[\\/]/.test(x) || !existsSync(join(lib, x, "meta.json")))) return json(res, 404, { error: "없는 프리셋이 섞여 있습니다." });
+        const moved = ids.map((x) => ({ id: x, trash: remove(lib, x) }));
+        return json(res, 200, { removed: moved.map((m) => m.id) });
+      }
+      if (parts[0] === "folders") {
+        // 가상 폴더(라이브러리 모드만). 바꾼 뒤에는 파일로 여는 index.html도 다시 만든다.
+        if (only) return send(res, 404, "이 서버는 항목 하나만 엽니다.");
+        if (!authed()) return send(res, 403, "토큰이 없거나 다릅니다.");
+        if (req.method === "GET" && parts.length === 1) { const entries = loadEntries(lib); return json(res, 200, { ...folderTree(lib, entries), suggestions: suggestFolders(entries) }); }
+        if (req.method !== "POST" || parts.length !== 2) return send(res, 404, "없음");
+        const origin = req.headers.origin;
+        if (origin && !okHosts.some((h) => origin === `http://${h}`)) return send(res, 403, "다른 출처");
+        const body = (await readJson(req)) ?? {};
+        const entries = loadEntries(lib);
+        let out;
+        try {
+          if (parts[1] === "add") out = addFolder(lib, body.path);
+          else if (parts[1] === "rename") out = renameFolder(lib, entries, body.from, body.to);
+          else if (parts[1] === "remove") out = removeFolder(lib, entries, body.path);
+          else if (parts[1] === "move") out = moveItems(lib, body.ids, body.folder ?? "");
+          else if (parts[1] === "suggest") out = { applied: applySuggestions(lib, entries) };
+          else return send(res, 404, "없음");
+        } catch (e) { return json(res, e.status ?? 400, { error: e.message }); }
+        writeIndex(lib);
+        const after = loadEntries(lib);
+        return json(res, 200, { ...out, tree: folderTree(lib, after) });
+      }
       if (parts[0] === "atlas") {
         if (only) return send(res, 404, "이 서버는 항목 하나만 엽니다.");
         if (!authed()) return send(res, 403, "토큰이 없거나 다릅니다.");
@@ -271,6 +319,44 @@ function startServer({ lib, only, port, token = randomBytes(16).toString("hex"),
           writeFileSync(draftPath, JSON.stringify({ ...body, id }, null, 2) + "\n");
           return json(res, 200, { ok: true });
         }
+        if (req.method === "GET" && action === "history") {
+          // 이전 버전 목록(새것부터). 파일 이름은 저장 시각이다.
+          const hist = join(dir, "history");
+          const files = existsSync(hist) ? readdirSync(hist).filter((f) => /\.html$/i.test(f) && !f.startsWith(".")).sort().reverse() : [];
+          return json(res, 200, { versions: files.map((f) => ({ file: f, at: historyTime(f), bytes: statSync(join(hist, f)).size })) });
+        }
+        if (req.method === "POST" && action === "restore") {
+          // 이전 버전을 새 버전으로 다시 저장한다(지금 파일도 history에 남으므로 되돌릴 수 있다)
+          const body = await readJson(req);
+          const name = String(body?.file ?? "");
+          if (!/^[^\\/]+\.html$/i.test(name) || name.startsWith(".")) return json(res, 400, { error: "버전 파일 이름이 잘못됐습니다." });
+          const p = join(dir, "history", name);
+          if (!existsSync(p)) return json(res, 404, { error: "없는 버전입니다." });
+          const r = save(lib, { file: p, id });
+          const html = readFileSync(file, "utf8");
+          const ch = watchers.get(id); if (ch) ch.lastHash = hashOf(html);
+          if (existsSync(draftPath)) rmSync(draftPath, { force: true });
+          return json(res, 200, { meta: r.meta, html, hash: hashOf(html), restored: name });
+        }
+        if (req.method === "POST" && action === "duplicate") {
+          // 복제해서 새 프리셋으로: 지금 화면 내용(html)이 오면 그것으로, 없으면 저장된 파일로. 폴더·종류·태그·내보내기 설정을 따라간다.
+          if (only) return json(res, 400, { error: "항목 하나만 여는 서버에서는 복제할 수 없습니다." });
+          const body = (await readJson(req)) ?? {};
+          const html = typeof body.html === "string" && /<html[\s>]/i.test(body.html) ? body.html : readFileSync(file, "utf8");
+          const meta = JSON.parse(readFileSync(join(dir, "meta.json"), "utf8"));
+          const tmp = mkdtempSync(join(tmpdir(), "webd-dup-"));
+          try {
+            const p = join(tmp, "component.html");
+            writeFileSync(p, html);
+            const name = String(body.name || `${meta.name} 사본`).trim().slice(0, 120);
+            const vp = meta.viewport ? `${meta.viewport.width}x${meta.viewport.height}` : undefined;
+            const r = save(lib, { file: p, name, category: meta.category, kind: meta.kind, folder: meta.folder ?? "", tags: (meta.tags || []).join(","), desc: meta.description, style: meta.style, viewport: vp, project: meta.source?.project, source: meta.source?.file });
+            if (existsSync(specPath)) {
+              try { const s = JSON.parse(readFileSync(specPath, "utf8")); delete s.lastExport; writeFileSync(join(lib, r.meta.id, "export.json"), JSON.stringify(s, null, 2) + "\n"); } catch {}
+            }
+            return json(res, 200, { meta: r.meta });
+          } finally { rmSync(tmp, { recursive: true, force: true }); }
+        }
         if (action === "export-spec") {
           if (req.method === "GET") {
             let saved = null;
@@ -367,9 +453,14 @@ function galleryHtml(lib) {
     const background = "background" in e ? e.background : detectBackground(html);
     return { ...e, background, html, path: join(lib, e.id, "component.html") };
   });
-  return renderGallery(entries, { libPath: lib, generatedAt: localIso(), categories: CATEGORIES, cli: CLI, server: true });
+  return renderGallery(entries, { libPath: lib, generatedAt: localIso(), categories: CATEGORIES, cli: CLI, server: true, tree: folderTree(lib, entries), suggestions: suggestFolders(entries) });
 }
 
+/** history 파일 이름(2026-11-11T115032+0900.html, 같은 초면 -2)을 읽기 쉬운 시각으로 */
+function historyTime(f) {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})(\d{2})/.exec(f);
+  return m ? `${m[1]} ${m[2]}:${m[3]}:${m[4]}` : f.replace(/\.html$/i, "");
+}
 function writeSpec(path, spec) { writeFileSync(path, JSON.stringify(spec, null, 2) + "\n"); }
 function fileInfo(f) { return { name: f.name, kind: f.kind, scale: f.scale, size: f.size ?? null, bytes: f.bytes.length }; }
 

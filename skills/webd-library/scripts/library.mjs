@@ -1,18 +1,23 @@
 #!/usr/bin/env node
-// library.mjs — WebD 컴포넌트 라이브러리. 의존성 없음, Node 18+.
+// library.mjs — WebD 프리셋 라이브러리. 의존성 없음, Node 18+.
 //
 // 라이브러리 폴더(기본 ~/.webd/library, 바꾸려면 --lib 또는 WEBD_LIBRARY):
-//   <id>/component.html     단독으로 열리는 HTML (컴포넌트 + 필요한 CSS·토큰)
-//   <id>/meta.json          이름, 분류, 태그, 저장·수정 시각, 출처, 원래 배경색(background) 등
+//   <id>/component.html     단독으로 열리는 HTML (프리셋 + 필요한 CSS·토큰)
+//   <id>/meta.json          이름, 종류(kind), 가상 폴더(folder), 분류, 태그, 저장·수정 시각, 출처, 원래 배경색(background) 등
 //   <id>/history/*.html     덮어쓰기 전 버전
+//   .folders.json           사용자가 만든 가상 폴더 목록(빈 폴더 포함). 실제 <id>/ 폴더는 옮기지 않는다(folders.mjs)
 //   .trash/                 remove로 옮긴 항목 (바로 지우지 않음)
 //   index.html              목록 갤러리 (save·remove 때마다 다시 만듦)
 //
 // 명령:
-//   save   --file <html> --name <이름> [--id <id>] [--category <분류>] [--tags a,b] [--desc <설명>]
+//   save   --file <html> --name <이름> [--id <id>] [--kind component|screen|pattern|token|effect] [--folder "잿빛 등대/대사창"]
+//          [--category <분류>] [--tags a,b] [--desc <설명>]
 //          [--project <프로젝트>] [--source <원본 파일>] [--style <디자인 근거>] [--viewport 1200x720]
 //   list   [--sort created|updated|name|category] [--order asc|desc] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
-//          [--category <분류>] [--tag <태그>] [--q <검색어>] [--json]
+//          [--folder <폴더>(하위 포함, ""는 폴더 없음)] [--kind <종류>] [--category <분류>] [--tag <태그>] [--q <검색어>] [--json]
+//   move   <id> [<id>…] --folder <폴더>        가상 폴더로 옮긴다(--folder ""는 폴더 없음). 내용·버전은 그대로
+//   folder list | add <폴더> | rename <폴더> <새 경로> | remove <폴더> | suggest [--apply]
+//          remove는 안의 프리셋·하위 폴더를 한 단계 위로 올린다. suggest는 이름이 태그로 시작하는 프리셋에 그 태그 폴더를 제안
 //   show   <id>
 //   remove <id>
 //   index
@@ -35,6 +40,7 @@ import { spawn, fork } from "node:child_process";
 import { watch } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { renderGallery } from "./gallery.mjs";
+import { KINDS, ro, normFolder, folderOf, kindOf, addFolder, moveItems, renameFolder, removeFolder, suggestFolders, applySuggestions, folderTree } from "./folders.mjs";
 
 export const CATEGORIES = ["hero", "nav", "button", "form", "table", "chart", "card", "list", "section", "footer", "feedback", "other"];
 const SORT_KEYS = ["created", "updated", "name", "category"];
@@ -229,6 +235,8 @@ export function save(lib, o) {
   if (!existsSync(o.file)) throw usage(`파일이 없음: ${o.file}`);
   if (![".html", ".htm"].includes(extname(o.file).toLowerCase())) throw usage("라이브러리에는 HTML 파일(.html 또는 .htm)을 저장합니다. PNG·스프라이트 시트·JSON은 별도 산출물입니다.");
   if (o.category && !CATEGORIES.includes(o.category)) throw usage(`분류는 ${CATEGORIES.join(", ")} 중 하나입니다.`);
+  if (o.kind && !KINDS.includes(o.kind)) throw usage(`종류는 ${KINDS.join(", ")} 중 하나입니다.`);
+  const folder = o.folder != null ? normFolder(o.folder) : null;
   const viewport = o.viewport ? parseViewport(o.viewport) : null;
   if (o.viewport && !viewport) throw usage("--viewport는 1200x720 형식입니다.");
 
@@ -270,6 +278,8 @@ export function save(lib, o) {
     name,
     description: o.desc ?? existing?.description ?? "",
     category,
+    ...((o.kind ?? existing?.kind) ? { kind: o.kind ?? existing.kind } : {}),
+    ...((folder ?? existing?.folder) ? { folder: folder ?? existing.folder } : {}),
     tags: o.tags ? o.tags.split(",").map((t) => t.trim()).filter(Boolean) : (existing?.tags ?? []),
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
@@ -283,7 +293,9 @@ export function save(lib, o) {
     background: detectBackground(html),
     bytes: Buffer.byteLength(html),
   };
+  if (folder === "") delete meta.folder;   // --folder ""는 폴더 없음으로
   writeFileSync(join(dir, "meta.json"), JSON.stringify(meta, null, 2) + "\n");
+  if (meta.folder) addFolder(lib, meta.folder);
   writeIndex(lib);
   return { meta, updated: Boolean(existing), dir };
 }
@@ -297,11 +309,16 @@ export function query(entries, o = {}) {
 
   const dateKey = sort === "updated" ? "updatedAt" : "createdAt";
   const q = (o.q || "").toLowerCase();
+  if (o.kind && !KINDS.includes(o.kind)) throw usage(`종류는 ${KINDS.join(", ")} 중 하나입니다.`);
+  // --folder "잿빛 등대"는 하위 폴더까지, --folder ""는 폴더 없는 것만
+  const folderFilter = o.folder != null ? normFolder(o.folder) : null;
   let list = entries.filter((e) => {
     const day = datePart(e[dateKey]);
     if (o.since && day < o.since) return false;
     if (o.until && day > o.until) return false;
     if (o.category && e.category !== o.category) return false;
+    if (o.kind && kindOf(e) !== o.kind) return false;
+    if (folderFilter != null) { const f = folderOf(e); if (folderFilter === "" ? f !== "" : !(f === folderFilter || f.startsWith(folderFilter + "/"))) return false; }
     if (o.tag && !e.tags.includes(o.tag)) return false;
     if (q && ![e.name, e.description, e.id, ...e.tags].join(" ").toLowerCase().includes(q)) return false;
     return true;
@@ -332,7 +349,7 @@ export function writeIndex(lib) {
     return { ...e, background, html, path: join(lib, e.id, "component.html") };
   });
   const out = join(lib, "index.html");
-  writeFileSync(out, renderGallery(entries, { libPath: lib, generatedAt: localIso(), categories: CATEGORIES, cli: fileURLToPath(import.meta.url) }));
+  writeFileSync(out, renderGallery(entries, { libPath: lib, generatedAt: localIso(), categories: CATEGORIES, cli: fileURLToPath(import.meta.url), tree: folderTree(lib, entries), suggestions: suggestFolders(entries) }));
   return out;
 }
 
@@ -352,6 +369,7 @@ function parseArgs(argv) {
     else if (a === "--list") o.list = true;
     else if (a === "--no-watch") o.noWatch = true;
     else if (a === "--lan") o.lan = true;
+    else if (a === "--apply") o.apply = true;
     else if (a.startsWith("--")) {
       const [k, v] = a.includes("=") ? [a.slice(2, a.indexOf("=")), a.slice(a.indexOf("=") + 1)] : [a.slice(2), rest[++i]];
       if (v === undefined) throw usage(`${a}에 값이 없습니다.`);
@@ -499,9 +517,39 @@ function main() {
         if (o.json) { console.log(JSON.stringify(list, null, 2)); return 0; }
         console.log(`라이브러리: ${lib}  (${list.length}개)`);
         for (const e of list) {
-          console.log(`${padWide(e.id, 40)}${e.category.padEnd(9)} 저장 ${fmtDate(e.createdAt)}  수정 ${fmtDate(e.updatedAt)}  ${e.name}${e.tags.length ? `  #${e.tags.join(" #")}` : ""}`);
+          console.log(`${padWide(e.id, 40)}${kindOf(e).padEnd(10)} 저장 ${fmtDate(e.createdAt)}  수정 ${fmtDate(e.updatedAt)}  ${e.name}${folderOf(e) ? `  [${folderOf(e)}]` : ""}${e.tags.length ? `  #${e.tags.join(" #")}` : ""}`);
         }
         return 0;
+      }
+      case "move": {
+        if (o.folder == null) throw usage("move에는 --folder가 필요합니다(폴더 없음은 --folder \"\").");
+        const r = moveItems(lib, o._, o.folder);
+        writeIndex(lib);
+        console.log(`${r.folder || "폴더 없음"}${ro(r.folder || "폴더 없음")} 옮김:${r.moved.length}개${r.moved.length < o._.length ? ` (이미 그 폴더: ${o._.length - r.moved.length}개)` : ""}`);
+        return 0;
+      }
+      case "folder": {
+        const [sub, a, b] = o._;
+        const entries = loadEntries(lib);
+        if (!sub || sub === "list") {
+          const t = folderTree(lib, entries);
+          if (o.json) { console.log(JSON.stringify(t, null, 2)); return 0; }
+          console.log(`폴더 ${t.folders.length}개 · 프리셋 ${t.total}개 (폴더 없음 ${t.unfiled}개)`);
+          for (const f of t.folders) console.log(`${"  ".repeat(f.split("/").length - 1)}${f.split("/").pop()}  ${t.counts[f] ?? 0}개`);
+          return 0;
+        }
+        if (sub === "add") { const r = addFolder(lib, a); writeIndex(lib); console.log(r.created ? `만듦: ${r.folder}` : `이미 있음: ${r.folder}`); return 0; }
+        if (sub === "rename") { const r = renameFolder(lib, entries, a, b); writeIndex(lib); console.log(`${r.from} → ${r.to} (프리셋 ${r.moved.length}개)`); return 0; }
+        if (sub === "remove") { const r = removeFolder(lib, entries, a); writeIndex(lib); console.log(`지움: ${r.folder} · 안의 프리셋 ${r.moved.length}개는 ${r.parent || "폴더 없음"}${ro(r.parent || "폴더 없음")}`); return 0; }
+        if (sub === "suggest") {
+          const s = suggestFolders(entries);
+          if (!s.length) { console.log("제안할 폴더가 없습니다(폴더 없는 프리셋 중 이름이 태그로 시작하는 것이 없음)."); return 0; }
+          for (const x of s) console.log(`${x.folder}  ${x.ids.length}개`);
+          if (o.apply) { applySuggestions(lib, entries); writeIndex(lib); console.log("적용했습니다."); }
+          else console.log("적용하려면 folder suggest --apply");
+          return 0;
+        }
+        throw usage("folder 명령: list | add <폴더> | rename <폴더> <새 경로> | remove <폴더> | suggest [--apply]");
       }
       case "show": {
         const id = o._[0];
@@ -534,7 +582,7 @@ function main() {
         return undefined;
       }
       default:
-        console.error("명령: save | list | show <id> | remove <id> | index | path | open | edit <id> | atlas <이름>  (자세한 옵션은 파일 머리 주석)");
+        console.error("명령: save | list | move <id…> --folder <폴더> | folder … | show <id> | remove <id> | index | path | open | edit <id> | atlas <이름>  (자세한 옵션은 파일 머리 주석)");
         return 1;
     }
   } catch (e) { console.error(e.message); return e.code ?? 1; }
