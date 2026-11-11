@@ -88,6 +88,8 @@ node "<스킬 폴더>/scripts/library.mjs" <명령> [옵션]
 node "<스킬 폴더>/scripts/library.mjs" open [--port <번호>] [--no-open] [--no-watch] [--lan]
 ```
 
+같은 일을 하는 바로가기: 저장소 루트의 `webd-library.cmd`(Windows, 더블클릭 또는 `webd-library.cmd --lan`처럼 인자 전달), Claude Code 플러그인 명령 `/jbro-webd:library [인자]`(서버를 백그라운드로 띄우고 사용자 브라우저를 직접 엶 — 접속 토큰은 대화에 옮기지 않음). 라이브러리 폴더는 `--lib`, 없으면 환경변수 `WEBD_LIBRARY`.
+
 Codex에서는 `--no-open`으로 백그라운드 실행하고 출력된 주소를 내부 브라우저에 엽니다. 주소의 토큰은 처음 한 번만 쓰이고(이후 같은 서버는 HttpOnly 쿠키로 확인), 보고나 로그에 옮기지 않습니다. 다 쓰면 서버를 끕니다.
 
 - 스킬 코드(`scripts/`·`editor/`, webd의 `render-check.mjs`)가 바뀌면 서버가 **같은 포트·토큰으로 저절로 다시 뜹니다**. 열린 탭은 새로 고침만 하면 됩니다. 끄려면 `--no-watch`.

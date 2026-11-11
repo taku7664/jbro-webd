@@ -180,6 +180,8 @@ node skills/webd/tools/serve-image-tokens.mjs
 node skills/webd-library/scripts/library.mjs save --file part.html --name "가격 표" --category table --tags 가격,구독
 node skills/webd-library/scripts/library.mjs list --sort updated --since 2026-10-01 --until 2026-10-31
 node skills/webd-library/scripts/library.mjs index      # 목록 페이지 다시 만들기
+# 더 쉽게: 저장소 루트의 webd-library.cmd를 더블클릭(Windows, 인자 그대로 전달: webd-library.cmd --lan),
+# Claude Code에서는 /jbro-webd:library (플러그인 명령, 서버를 백그라운드로 띄우고 브라우저를 엶)
 node skills/webd-library/scripts/library.mjs open       # 라이브러리 서버: 목록에서 카드를 누르면 편집기 (Ctrl+C로 닫음, 스킬 코드가 바뀌면 같은 주소로 저절로 다시 뜸, --lan이면 같은 와이파이 폰에서도)
 node skills/webd-library/scripts/library.mjs edit <id>  # 같은 서버를 열고 그 조각의 편집기를 바로 띄움
 ```
