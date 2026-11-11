@@ -1150,6 +1150,22 @@ function renderPanel() {
 function sectHead(title, ic, tip) { return el("h3", { class: "sect pane-head", tabindex: tip ? "0" : null, "data-tip": tip || null }, uiIcon(ic), el("span", { text: title })); }
 const fmt = (n) => { const r = Math.round(n * 10) / 10; return r === 0 ? "–" : String(r); };
 
+/** 입력칸 안 x 좌표 → 글자 위치(값 칸 끌기에서 어느 숫자를 바꿀지 정할 때) */
+let measureCtx = null;
+function charIndexAt(input, clientX) {
+  measureCtx ||= document.createElement("canvas").getContext("2d");
+  const cs = getComputedStyle(input);
+  measureCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+  const r = input.getBoundingClientRect();
+  const x = clientX - r.left - parseFloat(cs.paddingLeft) - parseFloat(cs.borderLeftWidth) + input.scrollLeft;
+  const v = input.value;
+  for (let i = 0; i < v.length; i++) {
+    const mid = (measureCtx.measureText(v.slice(0, i)).width + measureCtx.measureText(v.slice(0, i + 1)).width) / 2;
+    if (x < mid) return i;
+  }
+  return v.length;
+}
+
 /** 선언 한 줄. di가 -1이면 새로 더하는 줄 */
 function declRow(bi, ri, di, decl, { over = false, cs = null, extraText = "" }) {
   const keyBase = `${bi}:${ri}:${di}`;
@@ -1218,6 +1234,36 @@ function declRow(bi, ri, di, decl, { over = false, cs = null, extraText = "" }) 
       const r = nudge(vl.value, vl.selectionStart ?? vl.value.length, step);
       vl.value = r.value; vl.setSelectionRange(r.caret, r.caret); live();
     }
+  });
+  // ImGui DragInt·DragFloat처럼: 값 칸을 좌우로 끌면 누른 자리의 숫자가 바뀐다(Shift ×10, Alt ×0.1).
+  // 끌지 않고 떼면 그 자리에 커서를 두고 글자 입력. 끈 변경은 되돌리기 한 칸.
+  const HAS_NUM = /-?\d*\.?\d+/;
+  const syncScrubCursor = () => vl.classList.toggle("is-scrub", document.activeElement !== vl && HAS_NUM.test(vl.value));
+  syncScrubCursor();
+  vl.addEventListener("focus", syncScrubCursor); vl.addEventListener("blur", syncScrubCursor);
+  vl.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || document.activeElement === vl || !HAS_NUM.test(vl.value)) return;   // 이미 입력 중이면 보통 칸처럼
+    e.preventDefault();
+    vl.setPointerCapture(e.pointerId);
+    const idx = charIndexAt(vl, e.clientX), base = vl.value, sx = e.clientX;
+    let scrubbing = false;
+    const move = (ev) => {
+      const dx = ev.clientX - sx;
+      if (!scrubbing) {
+        if (Math.abs(dx) < 3) return;
+        scrubbing = true; vl.focus({ preventScroll: true }); document.body.classList.add("scrubbing");
+      }
+      const unit = ev.shiftKey ? 10 : ev.altKey ? 0.1 : 1;
+      const r = nudge(base, idx, Math.round(dx / 3) * unit);   // 3px마다 한 칸, 처음 값에서 다시 계산해 오차가 쌓이지 않게
+      if (vl.value !== r.value) { vl.value = r.value; live(); }
+    };
+    const up = () => {
+      vl.removeEventListener("pointermove", move); vl.removeEventListener("pointerup", up); vl.removeEventListener("pointercancel", up);
+      document.body.classList.remove("scrubbing");
+      if (scrubbing) vl.blur();                                   // 끈 만큼을 한 번에 확정
+      else { vl.focus({ preventScroll: true }); vl.setSelectionRange(idx, idx); }   // 클릭 = 그 자리에서 입력
+    };
+    vl.addEventListener("pointermove", move); vl.addEventListener("pointerup", up); vl.addEventListener("pointercancel", up);
   });
   cb.addEventListener("change", () => {
     if (S.editing) commitEditing();

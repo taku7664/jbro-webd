@@ -471,3 +471,8 @@ body.moving-panel, body.moving-panel * { cursor: move !important; user-select: n
   .splitter, .panel-float, .panel-grip { display: none !important; }
   body.float-tree .tree-panel, body.float-panel .panel { position: static; resize: none; border-radius: 0; box-shadow: none; width: auto !important; height: auto !important; }
 }
+
+/* 값 칸 끌기(ImGui Drag처럼): 숫자가 있는 값은 입력 전에는 좌우 끌기 커서 */
+.decl input.vl.is-scrub { cursor: ew-resize; }
+.decl input.vl.is-scrub:hover { border-color: var(--accent) !important; }
+body.scrubbing, body.scrubbing * { cursor: ew-resize !important; user-select: none; }
