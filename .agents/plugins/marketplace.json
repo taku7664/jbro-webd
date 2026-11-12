@@ -1,0 +1,20 @@
+{
+  "name": "jbro-webd",
+  "interface": {
+    "displayName": "WebD 플러그인"
+  },
+  "plugins": [
+    {
+      "name": "jbro-webd",
+      "source": {
+        "source": "local",
+        "path": "./.agents"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

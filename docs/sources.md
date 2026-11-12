@@ -25,3 +25,7 @@ WebD는 아래 자료의 **구조와 판단 기준**을 참고해 우리 말로 
 - 1차 작성(2026-11-09 오전)에는 각 저장소의 목차·분량과 일부 문서만 읽고 구조를 다시 썼습니다. 그 결과 과정·금지 규칙은 갖췄지만 "보기 좋게 만드는 기준"이 비어, 시험 화면이 검사는 통과하고 보기에는 구렸습니다.
 - 2차 보강(같은 날 오후)에 미감 관련 원문을 다시 읽었습니다: Impeccable `mode-operate`, `operate`, `craft-floor`, `new-work`, `layout`, `typeset`; design-for-ai 5·6·7장과 `surfaces`, `techniques` 목차; frontend-design 전문; ui-ux-pro-max `pro-rules`; Impeccable `colorize`, `polish`, `quieter`. 그 내용이 `visual-quality.md`와 `modes.md` Operate 절에 들어갔습니다.
 - 아직 전문을 읽지 않은 것: Impeccable `critique.md`(854줄) 등 명령 문서 다수, design-for-ai 1–4·8·9장 전문과 `checklists.md`, claude-design-styles 스펙 대부분.
+
+### 플러그인 설치 형식 (2026-11-12)
+
+- [OpenAI Developers, Package your plugin](https://developers.openai.com/plugins/build/plugins): Codex용 `plugin.json`의 스킬 자동 발견 방식, 저장소 `.agents/plugins/marketplace.json` 위치, 저장소 루트 기준 `source.path`, 로컬 마켓플레이스 설치 명령을 확인했다. 적용: `.agents/plugin.json`, `.agents/plugins/marketplace.json`, README 설치 안내. 코드나 문구를 복제하지 않았다.

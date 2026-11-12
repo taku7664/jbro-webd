@@ -1,0 +1,23 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "jbro-webd",
+  "version": "0.1.0",
+  "description": "웹·게임 UI를 설계·검사하는 WebD와 HTML 컴포넌트 라이브러리",
+  "author": {
+    "name": "PPAK_JU"
+  },
+  "repository": "https://github.com/taku7664/jbro-webd",
+  "license": "MIT",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "WebD",
+        "shortDescription": "웹·게임 UI 디자인과 컴포넌트 라이브러리",
+        "longDescription": "WebD로 웹·게임 UI를 설계·검토하고, HTML 컴포넌트를 라이브러리에 저장·편집·내보냅니다.",
+        "developerName": "PPAK_JU",
+        "category": "Productivity",
+        "websiteURL": "https://github.com/taku7664/jbro-webd"
+      }
+    }
+  }
+}

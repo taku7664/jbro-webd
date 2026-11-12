@@ -27,6 +27,9 @@ Codex와 Claude Code에서 쓰는 웹·게임 UI 디자인 스킬 **WebD**와, U
 
 ```
 .agents/skills/         Codex가 찾는 동기화 복사본
+.agents/plugin.json     Codex 플러그인 정보
+.agents/plugins/
+  marketplace.json   Codex의 저장소 마켓플레이스
 .claude-plugin/
   plugin.json          플러그인 정보
   marketplace.json     마켓플레이스로 추가할 때 읽는 목록
@@ -95,7 +98,16 @@ SKILL.md는 짧게 두고, 단계별 파일은 그 단계에서만 읽습니다.
 
 ### Codex
 
-이 저장소에서 세션을 열고 스킬 선택 메뉴에서 WebD를 고릅니다. Codex 0.153.4의 스킬 목록에는 `jbro-webd:webd`와 `jbro-webd:webd-library`로 표시됩니다. 수정은 `skills/`에 하고 루트에서 `node scripts/sync-codex.mjs`를 실행합니다. 복사본의 파일 목록과 내용은 테스트에서 원본과 비교합니다. [OpenAI CLI 설치 문서의 Codex 프로젝트 경로](https://developers.openai.com/api/reference/cli#use-the-cli-from-a-coding-agent)
+Codex 플러그인으로 설치하려면 저장소 루트에서 마켓플레이스를 추가한 뒤 설치합니다. 이 명령은 로컬 체크아웃의 `.agents/`를 사용하므로 동기화된 미커밋 스킬 변경도 설치본에 포함됩니다.
+
+```
+codex plugin marketplace add .
+codex plugin add jbro-webd@jbro-webd
+```
+
+Codex 앱에서는 이 저장소를 연 뒤 플러그인 목록에서 `WebD`를 설치할 수도 있습니다. 다른 컴퓨터에서는 저장소를 먼저 받아 로컬 경로에서 위 명령을 실행합니다. 설치한 플러그인에는 `webd`와 `webd-library` 스킬이 함께 들어 있습니다. 수정 후에는 마켓플레이스를 새로 고치고 플러그인을 갱신해야 설치 캐시에 반영됩니다. [OpenAI 공식 플러그인 패키징 문서](https://developers.openai.com/plugins/build/plugins)
+
+저장소를 작업 프로젝트로 연 경우에는 플러그인 설치 없이도 `.agents/skills/`의 두 스킬을 사용할 수 있습니다. 스킬 원본을 고칠 때는 `skills/`를 수정하고 루트에서 `node scripts/sync-codex.mjs`를 실행합니다. 복사본의 파일 목록과 내용은 테스트에서 원본과 비교합니다.
 
 ### Claude Code
 
